@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">一键闪记</string>
+    <string name="capture_button">截屏识别取餐/取件码</string>
+    <string name="permission_button">检查权限</string>
+    <string name="no_codes">暂无待取的码</string>
+</resources>
