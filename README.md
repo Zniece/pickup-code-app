@@ -1,62 +1,43 @@
-# 一键闪记 — Android 截屏+OCR 取餐码/取件码识别 App
+# 一键闪记
+
+自动识别截屏中的取餐码/取件码，通知提醒 + 一键标记已取。
 
 ## 功能
 
-- 从控制面板（Quick Settings Tile）一键触发截屏
-- ML Kit 离线 OCR 识别屏幕文字
-- 正则+位置加权策略自动提取取餐码/取件码
-- 高优先级通知，锁屏可见
-- 历史记录，标记"已取"
+- **自动识别**：打开外卖/快递 App，自动截屏识别
+- **快捷磁贴**：下拉控制面板一键触发，3秒退出即识别
+- **AI 识别**：可选接入 AI 提升准确率（支持自定义 API）
+- **智能去重**：重复码值只保留最新，不刷屏
+- **回收站**：标记已取后保留24小时，可撤销可恢复
+- **通知快速标记**：通知栏直接点「已取」
+- **纯本地**：数据不上传
+
+## 快速开始
+
+1. 下载 APK 安装
+2. 开启无障碍服务（设置 → 无障碍 → 一键闪记）
+3. 把磁贴加到控制面板（下拉 → ✏️ → 找到「一键闪记」）
+4. 打开外卖/快递 App，点击磁贴即可
+
+## 构建
+
+用 Android Studio 打开项目根目录即可。
+
+```
+./gradlew assembleRelease
+```
 
 ## 技术栈
 
 | 模块 | 技术 |
 |------|------|
 | UI | Jetpack Compose + Material3 |
-| OCR | Google ML Kit Text Recognition (中文·离线) |
+| OCR | ML Kit Text Recognition |
 | 截屏 | MediaProjection API |
-| 触发方式 | Quick Settings Tile |
-| 通知 | Ongoing Notification (锁屏可见) |
-| 存储 | Room (本地SQLite) |
+| 触发 | Quick Settings Tile + 无障碍服务 |
+| 存储 | Room (SQLite) |
+| AI | 可选接入任意 OpenAI 兼容 API |
 
-## 项目结构
+## 许可证
 
-```
-pickup-code-app/
-├── app/src/main/java/com/pickupcode/app/
-│   ├── App.kt                          # Application
-│   ├── MainActivity.kt                 # 主界面 + Compose UI
-│   ├── data/
-│   │   ├── CodeHistory.kt              # Room Entity
-│   │   └── CodeHistoryDao.kt           # DAO + Database
-│   ├── ocr/
-│   │   └── OCREngine.kt                # ML Kit 封装
-│   ├── extractor/
-│   │   └── CodeExtractor.kt            # 正则匹配 + 加权策略
-│   ├── notification/
-│   │   ├── CodeNotificationManager.kt  # 通知管理
-│   │   └── DoneReceiver.kt            # "已取完"按钮
-│   ├── service/
-│   │   ├── ScreenshotService.kt        # 前台服务·截屏+OCR
-│   │   └── PickupCodeTileService.kt    # Quick Settings Tile
-│   └── ui/theme/
-│       ├── Color.kt
-│       └── Theme.kt
-```
-
-## 构建
-
-用 Android Studio 打开 `pickup-code-app/` 目录即可。
-
-## 权限
-
-| 权限 | 用途 |
-|------|------|
-| FOREGROUND_SERVICE | 后台执行截屏+OCR |
-| SYSTEM_ALERT_WINDOW | 浮动提示（可选） |
-| POST_NOTIFICATIONS | 锁屏通知 |
-| MediaProjection | 截屏 |
-
-## 支持的取餐码/取件码格式
-
-详见 `research/pickup-code-formats.md`
+MIT

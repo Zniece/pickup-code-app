@@ -4,16 +4,5 @@ app/build/
 local.properties
 .idea/
 *.iml
-__pycache__/
 *.pyc
-
-# 只保留 app 本身，不包含 workspace 杂物
-../.openclaw/
-../.clawhub/
-../skills/
-../memory/
-../research/
-../media/
-../pdf_images/
-../avatars/
-../__pycache__/
+__pycache__/
