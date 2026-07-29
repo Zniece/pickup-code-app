@@ -5,8 +5,9 @@
 ## 截图
 
 <div align="center">
-  <img src="screenshots/Screenshot_20260729_222847.jpg" width="45%" alt="首页" />
-  <img src="screenshots/Screenshot_20260729_222900.jpg" width="45%" alt="设置" />
+  <img src="screenshots/Screenshot_20260729_222847.jpg" width="30%" alt="首页" />
+  <img src="screenshots/Screenshot_20260729_111501.jpg" width="30%" alt="识别结果" />
+  <img src="screenshots/Screenshot_20260729_111557.jpg" width="30%" alt="设置" />
 </div>
 
 ## 功能
