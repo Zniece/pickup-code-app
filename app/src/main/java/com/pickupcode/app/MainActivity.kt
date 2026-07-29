@@ -1,7 +1,10 @@
 package com.pickupcode.app
 
 import android.os.Build
+import android.content.Intent
 import android.os.Bundle
+import android.provider.Settings
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,6 +57,7 @@ import java.time.format.DateTimeFormatter
 class MainActivity : ComponentActivity() {
 
     private var hasNotificationPermission by mutableStateOf(false)
+    private var isAccessibilityEnabled by mutableStateOf(false)
     private var currentScreen by mutableStateOf(Screen.Home)
     private var selectedCodeId by mutableStateOf(-1L)
     private var showManualDialog by mutableStateOf(false)
@@ -81,10 +85,13 @@ class MainActivity : ComponentActivity() {
                 currentScreen = Screen.Home
             }
 
+            isAccessibilityEnabled = isAccessibilityServiceEnabled()
+
             PickupCodeTheme {
                 when (currentScreen) {
                     Screen.Home -> MainScreen(
                         hasNotificationPermission = hasNotificationPermission,
+                        isAccessibilityEnabled = isAccessibilityEnabled,
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 notificationPermissionLauncher.launch(
@@ -92,6 +99,7 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         },
+                        onEnableAccessibility = { openAccessibilitySettings() },
                         onSettingsClick = { currentScreen = Screen.Settings },
                         onItemClick = { id ->
                             selectedCodeId = id
@@ -123,6 +131,11 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        isAccessibilityEnabled = isAccessibilityServiceEnabled()
     }
 
     @Composable
@@ -193,7 +206,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun MainScreen(
     hasNotificationPermission: Boolean,
+    isAccessibilityEnabled: Boolean,
     onRequestNotificationPermission: () -> Unit,
+    onEnableAccessibility: () -> Unit,
     onSettingsClick: () -> Unit,
     onItemClick: (Long) -> Unit,
     onFabClick: () -> Unit,
@@ -249,33 +264,61 @@ fun MainScreen(
                 onRequestPermission = onRequestNotificationPermission
             )
 
-            // 使用指引
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.primaryContainer
-                )
-            ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(
-                        "🔍 使用方式",
-                        style = MaterialTheme.typography.titleSmall
+            // 无障碍服务引导
+            if (!isAccessibilityEnabled) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "打开外卖/快递App → 下拉控制面板 → 点「一键闪记」磁贴即可自动识别",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(
+                            "🔧 需要开启无障碍服务",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "开启后点快捷设置磁贴即可自动识别屏幕上的取餐码/取件码",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.material3.Button(onClick = onEnableAccessibility) {
+                            Text("去开启")
+                        }
+                    }
+                }
+            } else {
+                // 已开启——使用提示
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer
                     )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "提示：首次使用需要授权截屏权限，仅允许一次即可",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
-                    )
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text(
+                            "✅ 无障碍服务已开启",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            "打开控制面板 → 点✏️编辑 → 找到「一键闪记」→ 拖到面板",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "固定后点击磁贴，再在3秒内退出控制面板即可自动识别",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
 
