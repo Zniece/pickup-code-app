@@ -22,7 +22,6 @@ import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -158,42 +157,15 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // ── 关于 ──
-            item {
-                Text("关于", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
+            // ── 底部信息 ──
             item {
                 Column {
-                    Text("一键闪记 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
-                    Text("基于 ML Kit OCR · 数据仅存储在本地",
+                    Spacer(Modifier.height(8.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(8.dp))
+                    Text("一键闪记 v${BuildConfig.VERSION_NAME}\n基于 ML Kit OCR · 数据仅存储在本地",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                    Text("GitHub: https://github.com/zixij644-elaborate/pickup-code-app",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary)
-                }
-            }
-            item {
-                var updateStatus by remember { mutableStateOf<String?>(null) }
-                var isChecking by remember { mutableStateOf(false) }
-
-                OutlinedButton(
-                    onClick = {
-                        isChecking = true
-                        updateStatus = null
-                        scope.launch {
-                            val result = checkUpdate()
-                            updateStatus = result
-                            isChecking = false
-                        }
-                    },
-                    enabled = !isChecking
-                ) {
-                    Text(if (isChecking) "检查中..." else "检查更新")
-                }
-                updateStatus?.let {
-                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -208,33 +180,5 @@ private fun SwitchRow(title: String, subtitle: String, checked: Boolean, onChang
             Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Switch(checked = checked, onCheckedChange = onChanged)
-    }
-}
-
-private suspend fun checkUpdate(): String = withContext(Dispatchers.IO) {
-    try {
-        val url = java.net.URL("https://api.github.com/repos/zixij644-elaborate/pickup-code-app/releases/latest")
-        val conn = url.openConnection() as java.net.HttpURLConnection
-        conn.requestMethod = "GET"
-        conn.setRequestProperty("Accept", "application/vnd.github.v3+json")
-        conn.connectTimeout = 10_000
-        conn.readTimeout = 10_000
-
-        if (conn.responseCode != 200) return@withContext "检查失败: HTTP ${conn.responseCode}"
-
-        val response = conn.inputStream.bufferedReader().readText()
-        conn.disconnect()
-
-        val json = org.json.JSONObject(response)
-        val latestVersion = json.getString("tag_name").removePrefix("v")
-        val currentVersion = BuildConfig.VERSION_NAME
-
-        if (latestVersion == currentVersion) {
-            "当前已是最新版本 (v$currentVersion)"
-        } else {
-            "发现新版本 v$latestVersion，当前 v$currentVersion"
-        }
-    } catch (e: Exception) {
-        "检查失败: ${e.message}"
     }
 }
