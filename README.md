@@ -5,21 +5,13 @@
 ## 截图
 
 <div align="center">
-  <img src="screenshots/Screenshot_20260729_111501.jpg" width="45%" alt="识别结果" />
-  <img src="screenshots/Screenshot_20260729_111557.jpg" width="45%" alt="识别结果" />
-</div>
-
-## 截图
-
-<div align="center">
   <img src="screenshots/Screenshot_20260729_222847.jpg" width="45%" alt="首页" />
   <img src="screenshots/Screenshot_20260729_222900.jpg" width="45%" alt="设置" />
 </div>
 
 ## 功能
 
-- **自动识别**：打开外卖/快递 App，自动截屏识别
-- **快捷磁贴**：下拉控制面板一键触发，3秒退出即识别
+- **一键识别**：点控制面板磁贴，一键截屏识别取餐码/取件码
 - **AI 识别**：可选接入 AI 提升准确率（支持自定义 API）
 - **智能去重**：重复码值只保留最新，不刷屏
 - **回收站**：标记已取后保留24小时，可撤销可恢复
@@ -31,15 +23,7 @@
 1. 下载 APK 安装
 2. 开启无障碍服务（设置 → 无障碍 → 一键闪记）
 3. 把磁贴加到控制面板（下拉 → ✏️ → 找到「一键闪记」）
-4. 打开外卖/快递 App，点击磁贴即可
-
-## 构建
-
-用 Android Studio 打开项目根目录即可。
-
-```
-./gradlew assembleRelease
-```
+4. 打开外卖/快递 App，点磁贴即可识别
 
 ## 技术栈
 
@@ -47,8 +31,8 @@
 |------|------|
 | UI | Jetpack Compose + Material3 |
 | OCR | ML Kit Text Recognition |
-| 截屏 | MediaProjection API |
-| 触发 | Quick Settings Tile + 无障碍服务 |
+| 截屏 | 无障碍服务 takeScreenshot |
+| 触发 | Quick Settings Tile |
 | 存储 | Room (SQLite) |
 | AI | 可选接入任意 OpenAI 兼容 API |
 
