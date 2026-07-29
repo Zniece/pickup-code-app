@@ -441,6 +441,14 @@ fun CodeHistoryCard(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (item.pickupAddress.isNotBlank()) {
+                    Text(
+                        "📍 ${item.pickupAddress}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
                 Text(
                     "点击查看详情 ›",
                     style = MaterialTheme.typography.labelSmall,

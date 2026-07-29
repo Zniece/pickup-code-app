@@ -209,6 +209,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             }
         }
 
+        // 提取地址（取件场景）
+        val address = CodeExtractor.extractAddress(ocrLines, allText)
+
         if (allResults.isEmpty()) {
             showResult("未识别到取餐码/取件码")
             return
@@ -229,7 +232,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 conflicts.add(code)
             }
 
-            saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, source)
+            saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, source, address)
         }
 
         // 有冲突时通知用户自行判断
@@ -245,7 +248,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun saveCode(code: String, type: CodeExtractor.CodeType, source: String, screenshotPath: String, raw: String) {
+    private fun saveCode(code: String, type: CodeExtractor.CodeType, source: String, screenshotPath: String, raw: String, address: String = "") {
         scope.launch {
             val db = AppDatabase.getInstance(this@PickupCodeAccessibilityService)
             val dao = db.codeHistoryDao()
@@ -259,6 +262,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                     screenshotPath = screenshotPath.ifEmpty { existing.screenshotPath },
                     source = source,
                     rawTextSnippet = raw,
+                    pickupAddress = address.ifBlank { existing.pickupAddress },
                     isActive = true,
                     doneAt = 0
                 ))
@@ -268,7 +272,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                     code = code, type = type.name,
                     source = source,
                     screenshotPath = screenshotPath,
-                    rawTextSnippet = raw
+                    rawTextSnippet = raw,
+                    pickupAddress = address
                 ))
             }
 

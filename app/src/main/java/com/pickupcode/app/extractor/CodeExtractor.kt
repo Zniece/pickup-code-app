@@ -238,11 +238,22 @@ object CodeExtractor {
         if (candidates.isEmpty()) return emptyList()
 
         // 全局上下文修正
-        // 1. 如果存在三段式取件码（最高可靠性），长数字大概率是订单号，降权
+        // 仅单一场景（纯快递 or 纯餐饮）时抑制对立类型，混合场景不惩罚任何一方
+        if (isParcelContext && !isFoodContext) {
+            candidates.replaceAll { c ->
+                if (c.type == CodeType.pickup_food) c.copy(score = c.score - 50f) else c
+            }
+        }
+        if (isFoodContext && !isParcelContext) {
+            candidates.replaceAll { c ->
+                if (c.type == CodeType.pickup_parcel) c.copy(score = c.score - 50f) else c
+            }
+        }
+        // 3. 如果存在三段式取件码（最高可靠性），长数字大概率是订单号，降权
         val hasThreeSegment = candidates.any {
             it.type == CodeType.pickup_parcel && THREE_SEGMENT_PARCEL.matches(it.code)
         }
-        // 2. 检测文本中是否有订单号格式（多段长数字用横杠连接）
+        // 4. 检测文本中是否有订单号格式（多段长数字用横杠连接）
         val hasOrderNumber = allText.contains(Regex("\\b\\d{6,}-\\d{5,}\\b")) ||
             allText.contains(Regex("\\b\\d{2}-\\d{5,}-\\d{4,}\\b"))
 
@@ -395,5 +406,41 @@ object CodeExtractor {
 
     private fun isExcluded(code: String): Boolean {
         return EXCLUDE_PATTERNS.any { it.containsMatchIn(code) }
+    }
+
+    /**
+     * 从 OCR 文本中提取取件地址
+     * 匹配模式：\"代收点地址\"/\"取件地址\"/\"收货地址\" + 地址内容
+     */
+    fun extractAddress(lines: List<OCREngine.TextLine>, allText: String): String {
+        val addressPrefixes = listOf("代收点地址", "取件地址", "收货地址", "地址")
+
+        // 1. 同一行匹配："代收点地址：育新路北段..."
+        for (line in lines) {
+            for (prefix in addressPrefixes) {
+                val idx = line.text.indexOf(prefix)
+                if (idx >= 0) {
+                    // 取前缀后面的内容（跳过 : ： 空格）
+                    val after = line.text.substring(idx + prefix.length)
+                        .trimStart(':', '：', ' ')
+                    if (after.length >= 4) return after.take(50)
+                }
+            }
+        }
+
+        // 2. 跨行匹配：前缀一行，地址在下一行
+        for (i in lines.indices) {
+            val line = lines[i]
+            val isPrefixLine = addressPrefixes.any { line.text.contains(it) }
+            if (isPrefixLine && i + 1 < lines.size) {
+                val nextLine = lines[i + 1].text.trim()
+                // 下一行应该像地址（包含中文、数字、路/号/栋等）
+                if (nextLine.length >= 4 && nextLine.any { it in '\u4e00'..'\u9fff' }) {
+                    return nextLine.take(50)
+                }
+            }
+        }
+
+        return ""
     }
 }

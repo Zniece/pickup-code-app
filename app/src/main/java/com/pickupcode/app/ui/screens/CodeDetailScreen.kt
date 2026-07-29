@@ -84,6 +84,21 @@ fun CodeDetailScreen(
                 onSave = { newValue -> onUpdated(item.copy(source = newValue)) }
             )
 
+            // 取件地址（只读，仅取件码显示）
+            if (item.pickupAddress.isNotBlank()) {
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("取件地址", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "📍 ${item.pickupAddress}",
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+            }
+
             // OCR 原始文本（只读）
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
