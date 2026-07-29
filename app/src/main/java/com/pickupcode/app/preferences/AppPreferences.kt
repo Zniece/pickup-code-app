@@ -21,7 +21,7 @@ object AppPreferences {
     private val KEY_ENABLE_AI = booleanPreferencesKey("enable_ai")
 
     data class Settings(
-        val confidenceThreshold: Float = 0.3f,
+        val confidenceThreshold: Float = 0.5f,
         val enableFoodCodes: Boolean = true,
         val enableParcelCodes: Boolean = true,
         val darkMode: String = "system",
@@ -34,7 +34,7 @@ object AppPreferences {
     fun observe(context: Context): Flow<Settings> {
         return context.dataStore.data.map { prefs ->
             Settings(
-                confidenceThreshold = prefs[KEY_CONFIDENCE_THRESHOLD] ?: 0.3f,
+                confidenceThreshold = prefs[KEY_CONFIDENCE_THRESHOLD] ?: 0.5f,
                 enableFoodCodes = prefs[KEY_ENABLE_FOOD] ?: true,
                 enableParcelCodes = prefs[KEY_ENABLE_PARCEL] ?: true,
                 darkMode = prefs[KEY_DARK_MODE] ?: "system",
