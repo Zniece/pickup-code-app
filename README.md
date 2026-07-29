@@ -2,6 +2,13 @@
 
 自动识别截屏中的取餐码/取件码，通知提醒 + 一键标记已取。
 
+## 截图
+
+<div align="center">
+  <img src="screenshots/Screenshot_20260729_111501.jpg" width="45%" alt="识别结果" />
+  <img src="screenshots/Screenshot_20260729_111557.jpg" width="45%" alt="识别结果" />
+</div>
+
 ## 功能
 
 - **自动识别**：打开外卖/快递 App，自动截屏识别
