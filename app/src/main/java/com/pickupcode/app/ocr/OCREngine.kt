@@ -26,13 +26,17 @@ object OCREngine {
         val confidence: Float?
     )
 
+    // Unicode dash variants that OCR often produces instead of ASCII "-" (U+002D).
+    // Normalizing these ensures CodeExtractor's regex patterns match correctly.
+    private val UNICODE_DASHES = Regex("[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]")
+
     suspend fun recognize(bitmap: Bitmap): List<TextLine> {
         val image = InputImage.fromBitmap(bitmap, 0)
         val result = getRecognizer().process(image)
         return result.await().textBlocks.flatMap { block ->
             block.lines.map { line ->
                 TextLine(
-                    text = line.text.trim(),
+                    text = line.text.trim().replace(UNICODE_DASHES, "-"),
                     boundingBox = line.boundingBox,
                     confidence = line.confidence
                 )

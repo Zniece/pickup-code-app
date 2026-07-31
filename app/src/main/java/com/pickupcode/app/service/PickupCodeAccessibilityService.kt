@@ -15,6 +15,8 @@ import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.geocoder.GeocoderVerifier
+import com.pickupcode.app.learner.PatternLearner
 import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
@@ -201,7 +203,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
 
         // 正则（总是运行，不因AI阻断）
-        val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels)
+        val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this)
         for (re in regexResults) {
             if (re.confidence >= settings.confidenceThreshold && isTypeEnabled(re.type, settings)) {
                 allResults.add(re.code to re.type)
@@ -209,8 +211,24 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             }
         }
 
-        // 提取地址（取件场景）
+        // Extract address (parcel scenario)
         val address = CodeExtractor.extractAddress(ocrLines, allText)
+
+        // Map verification (async, fire-and-forget)
+        if (settings.enableMapVerify && address.isNotBlank()) {
+            scope.launch {
+                val result = GeocoderVerifier.verify(
+                    this@PickupCodeAccessibilityService, address,
+                    amapApiKey = settings.amapApiKey.ifBlank { null }
+                )
+                Log.d(TAG, "Map verify: verified=${result.verified}, confidence=${result.confidence}, provider=${result.provider}, address=$address")
+                if (result.verified) {
+                    PatternLearner.recordAddressVerified(
+                        this@PickupCodeAccessibilityService, address, result.confidence
+                    )
+                }
+            }
+        }
 
         if (allResults.isEmpty()) {
             showResult("未识别到取餐码/取件码")

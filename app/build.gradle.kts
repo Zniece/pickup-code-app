@@ -13,8 +13,8 @@ android {
         applicationId = "com.pickupcode.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 13
-        versionName = "1.0.2"
+        versionCode = 18
+        versionName = "1.0.4"
     }
 
     buildTypes {
@@ -55,6 +55,7 @@ dependencies {
 
     // ML Kit Text Recognition (offline, free)
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+
 
     // Room for history storage
     implementation("androidx.room:room-runtime:2.6.1")

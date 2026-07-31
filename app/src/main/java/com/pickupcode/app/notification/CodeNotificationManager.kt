@@ -90,4 +90,37 @@ object CodeNotificationManager {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.cancel(id)
     }
+
+    /** Show notification for a duplicate code — informs user there are now ≥2 records for this code. */
+    fun showDuplicate(context: Context, code: String, type: CodeExtractor.CodeType, source: String, historyId: Long, dupGroupCount: Int) {
+        val channelId = when (type) {
+            CodeExtractor.CodeType.pickup_parcel -> CHANNEL_PARCEL
+            CodeExtractor.CodeType.pickup_food -> CHANNEL_FOOD
+        }
+        val iconLabel = when (type) {
+            CodeExtractor.CodeType.pickup_parcel -> "\uD83D\uDCE6"
+            CodeExtractor.CodeType.pickup_food -> "\uD83E\uDD64"
+        }
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra("show_dedup", true)
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context, code.hashCode(), intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("$iconLabel $code 再次出现")
+            .setContentText("$source · 点击整理去重（共 ${dupGroupCount} 组重复）")
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+
+        val nm = context.getSystemService(NotificationManager::class.java)
+        nm.notify("dup_$code".hashCode(), notification)
+    }
 }

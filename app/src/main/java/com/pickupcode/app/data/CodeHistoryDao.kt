@@ -37,6 +37,10 @@ interface CodeHistoryDao {
     @Query("UPDATE code_history SET isActive = 0, doneAt = :doneAt WHERE id = :id")
     suspend fun markDone(id: Long, doneAt: Long = System.currentTimeMillis())
 
+    /** 批量标记：同 code+type 的所有活跃记录标记为已取 */
+    @Query("UPDATE code_history SET isActive = 0, doneAt = :doneAt WHERE code = :code AND type = :type AND isActive = 1")
+    suspend fun markDoneByCodeAndType(code: String, type: String, doneAt: Long = System.currentTimeMillis())
+
     /** 从回收站恢复 */
     @Query("UPDATE code_history SET isActive = 1, doneAt = 0 WHERE id = :id")
     suspend fun restore(id: Long)
@@ -51,9 +55,21 @@ interface CodeHistoryDao {
 
     @Query("DELETE FROM code_history WHERE timestamp < :before")
     suspend fun deleteOlderThan(before: Long)
+
+    /** 查重复码值分组（同 code+type 出现 ≥2 次），每组返回最新一条 */
+    @Query("SELECT * FROM code_history WHERE isActive = 1 AND code || ':' || type IN (SELECT code || ':' || type FROM code_history WHERE isActive = 1 GROUP BY code, type HAVING COUNT(*) >= 2) ORDER BY code, timestamp DESC")
+    suspend fun getDuplicateEntries(): List<CodeHistory>
+
+    /** 查同 code+type 的所有重复记录 */
+    @Query("SELECT * FROM code_history WHERE code = :code AND type = :type AND isActive = 1 ORDER BY timestamp DESC")
+    suspend fun getDuplicatesByCodeAndType(code: String, type: String): List<CodeHistory>
+
+    /** 统计活跃的重复组数量 */
+    @Query("SELECT COUNT(*) FROM (SELECT 1 FROM code_history WHERE isActive = 1 GROUP BY code, type HAVING COUNT(*) >= 2)")
+    suspend fun countDuplicateGroups(): Int
 }
 
-@Database(entities = [CodeHistory::class], version = 2, exportSchema = false)
+@Database(entities = [CodeHistory::class], version = 3, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun codeHistoryDao(): CodeHistoryDao
 

@@ -15,15 +15,42 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTask"
             android:configChanges="orientation|screenSize"
             android:theme="@style/Theme.PickupCode">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- Share from other apps (system share sheet, OEM drag-and-drop) -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+
+            <!-- Text selection menu (standard Android long-press floating toolbar) -->
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+
+            <!-- Broad text/* for better OEM matching -->
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
         </activity>
 
-        <!-- 无障碍服务：节点文字 + 截屏 OCR -->
+        <!-- Accessibility service: node text + screenshot OCR -->
         <service
             android:name=".service.PickupCodeAccessibilityService"
             android:exported="true"
@@ -44,7 +71,7 @@
             android:name=".notification.DoneReceiver"
             android:exported="false" />
 
-        <!-- 快捷设置磁贴 -->
+        <!-- Quick Settings tile -->
         <service
             android:name=".service.PickupCodeTileService"
             android:exported="true"

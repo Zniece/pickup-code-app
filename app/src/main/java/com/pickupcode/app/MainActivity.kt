@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -43,10 +44,12 @@ import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.preferences.AppPreferences
+import com.pickupcode.app.share.ShareReceiver
 import com.pickupcode.app.ui.components.ManualCodeDialog
 import com.pickupcode.app.ui.components.NotificationPermissionBanner
 import com.pickupcode.app.ui.screens.CodeDetailScreen
 import com.pickupcode.app.ui.screens.SettingsScreen
+import com.pickupcode.app.ui.screens.StatsScreen
 import com.pickupcode.app.ui.theme.PickupCodeTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,7 +65,7 @@ class MainActivity : ComponentActivity() {
     private var selectedCodeId by mutableStateOf(-1L)
     private var showManualDialog by mutableStateOf(false)
 
-    enum class Screen { Home, Settings, Detail, Trash }
+    enum class Screen { Home, Settings, Detail, Trash, Stats }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -71,6 +74,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // 处理外部分享/拖放 Intent（首次启动时）
+        ShareReceiver.handle(this, intent, lifecycleScope)
 
         hasNotificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -106,16 +112,21 @@ class MainActivity : ComponentActivity() {
                             currentScreen = Screen.Detail
                         },
                         onFabClick = { showManualDialog = true },
-                        onTrashClick = { currentScreen = Screen.Trash }
+                        onTrashClick = { currentScreen = Screen.Trash },
+                        onStatsClick = { currentScreen = Screen.Stats }
                     )
                     Screen.Settings -> SettingsScreen(
-                        onBack = { currentScreen = Screen.Home }
+                        onBack = { currentScreen = Screen.Home },
+                        onStatsClick = { currentScreen = Screen.Stats }
                     )
                     Screen.Detail -> DetailScreenWrapper(
                         codeId = selectedCodeId,
                         onBack = { currentScreen = Screen.Home }
                     )
                     Screen.Trash -> TrashScreen(
+                        onBack = { currentScreen = Screen.Home }
+                    )
+                    Screen.Stats -> StatsScreen(
                         onBack = { currentScreen = Screen.Home }
                     )
                 }
@@ -131,6 +142,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // 处理外部分享/拖放 Intent（App已在运行中时）
+        ShareReceiver.handle(this, intent, lifecycleScope)
     }
 
     override fun onResume() {
@@ -154,7 +171,8 @@ class MainActivity : ComponentActivity() {
                 },
                 onMarkDone = { id ->
                     lifecycleScope.launch(Dispatchers.IO) {
-                        db.codeHistoryDao().markDone(id)
+                        // Batch delete all duplicates
+                        item?.let { db.codeHistoryDao().markDoneByCodeAndType(it.code, it.type) }
                     }
                     onBack()
                 }
@@ -212,7 +230,8 @@ fun MainScreen(
     onSettingsClick: () -> Unit,
     onItemClick: (Long) -> Unit,
     onFabClick: () -> Unit,
-    onTrashClick: () -> Unit
+    onTrashClick: () -> Unit,
+    onStatsClick: () -> Unit
 ) {
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
@@ -220,12 +239,21 @@ fun MainScreen(
     val trashHistory by db.codeHistoryDao().getTrashFlow().collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    var dedupCount by remember { mutableIntStateOf(0) }
 
-    // 自动清理过期回收站记录（每次进入主页检查一次）
+    // 自动清理过期回收站记录
     LaunchedEffect(Unit) {
         scope.launch(Dispatchers.IO) {
             val oneDayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000
             db.codeHistoryDao().deleteExpiredTrash(oneDayAgo)
+            dedupCount = db.codeHistoryDao().countDuplicateGroups()
+        }
+    }
+
+    // 监听活跃记录变化时刷新去重计数
+    LaunchedEffect(activeHistory) {
+        scope.launch(Dispatchers.IO) {
+            dedupCount = db.codeHistoryDao().countDuplicateGroups()
         }
     }
 
@@ -235,6 +263,9 @@ fun MainScreen(
             TopAppBar(
                 title = { Text("一键闪记") },
                 actions = {
+                    IconButton(onClick = onStatsClick) {
+                        Icon(Icons.Default.Info, "统计")
+                    }
                     IconButton(onClick = onTrashClick) {
                         Icon(Icons.Default.RestoreFromTrash, "回收站")
                     }
@@ -346,6 +377,30 @@ fun MainScreen(
                 }
             }
 
+            // 去重提示
+            if (dedupCount > 0) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp)
+                        .clickable(onClick = onStatsClick),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "🔄 发现 ${dedupCount} 组重复记录，点击查看 →",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                    }
+                }
+            }
+
             Spacer(modifier = Modifier.height(8.dp))
 
             // 历史记录
@@ -380,7 +435,8 @@ fun MainScreen(
                             onClick = { onItemClick(item.id) },
                             onDelete = {
                                 scope.launch(Dispatchers.IO) {
-                                    db.codeHistoryDao().markDone(item.id)
+                                    // Batch delete all duplicates
+                                    db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
                                     val snackbarResult = snackbarHostState.showSnackbar(
                                         message = "已移至回收站，24小时后自动删除",
                                         actionLabel = "撤销",
@@ -393,7 +449,8 @@ fun MainScreen(
                             },
                             onDone = {
                                 scope.launch(Dispatchers.IO) {
-                                    db.codeHistoryDao().markDone(item.id)
+                                    // Batch delete all duplicates
+                                    db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
                                     val snackbarResult = snackbarHostState.showSnackbar(
                                         message = "已移至回收站，24小时后自动删除",
                                         actionLabel = "撤销",

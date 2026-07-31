@@ -15,10 +15,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import android.graphics.BitmapFactory
 import com.pickupcode.app.data.CodeHistory
+import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.learner.PatternLearner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -36,6 +39,14 @@ fun CodeDetailScreen(
     onUpdated: (CodeHistory) -> Unit,
     onMarkDone: ((Long) -> Unit)? = null
 ) {
+    val ctx = LocalContext.current; val scope = rememberCoroutineScope()
+    var codeConfirmed by remember { mutableStateOf(PatternLearner.isCodeConfirmed(ctx, item.id)) }
+    var sourceConfirmed by remember { mutableStateOf(PatternLearner.isSourceConfirmed(ctx, item.id)) }
+    var addrConfirmed by remember { mutableStateOf(PatternLearner.isAddrConfirmed(ctx, item.id)) }
+    var codeIncorrect by remember { mutableStateOf(PatternLearner.isCodeIncorrect(ctx, item.id)) }
+    var sourceIncorrect by remember { mutableStateOf(PatternLearner.isSourceIncorrect(ctx, item.id)) }
+    var addrIncorrect by remember { mutableStateOf(PatternLearner.isAddrIncorrect(ctx, item.id)) }
+
     Scaffold(
         topBar = { TopAppBar(title = { Text("详情") }, navigationIcon = {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } }) }
@@ -56,17 +67,88 @@ fun CodeDetailScreen(
 
             EditableField(label = "码值", value = item.code, displayFontSize = 28.sp, displayFontWeight = FontWeight.Bold,
                 onSave = { onUpdated(item.copy(code = it)) })
+            if (item.isActive) {
+                InlineConfirm("码值正确", confirmed = codeConfirmed, incorrect = codeIncorrect,
+                    onCorrect = {
+                        codeConfirmed = true
+                        PatternLearner.setCodeConfirmed(ctx, item.id, true)
+                        scope.launch(Dispatchers.IO) {
+                            PatternLearner.recordVerified(ctx, CodeExtractor.getPatternId(item.code))
+                        }
+                    },
+                    onIncorrect = {
+                        codeIncorrect = true
+                        PatternLearner.setCodeIncorrect(ctx, item.id, true)
+                        scope.launch(Dispatchers.IO) {
+                            PatternLearner.recordCodeIncorrect(ctx, CodeExtractor.getPatternId(item.code))
+                        }
+                    }
+                )
+            }
 
             EditableField(label = "来源", value = item.source, displayFontSize = 18.sp,
                 onSave = { onUpdated(item.copy(source = it)) })
+            if (item.isActive) {
+                InlineConfirm("来源正确", confirmed = sourceConfirmed, incorrect = sourceIncorrect,
+                    onCorrect = {
+                        sourceConfirmed = true
+                        PatternLearner.setSourceConfirmed(ctx, item.id, true)
+                        scope.launch(Dispatchers.IO) {
+                            PatternLearner.recordSourceMatch(ctx, item.source)
+                        }
+                    },
+                    onIncorrect = {
+                        sourceIncorrect = true
+                        PatternLearner.setSourceIncorrect(ctx, item.id, true)
+                        scope.launch(Dispatchers.IO) {
+                            PatternLearner.recordSourceIncorrect(ctx, item.source)
+                        }
+                    }
+                )
+            }
 
             if (item.pickupAddress.isNotBlank()) {
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("取件地址", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(4.dp))
-                        Text("📍 ${item.pickupAddress}", fontSize = 16.sp)
+                EditableField(label = "取件地址", value = item.pickupAddress, displayFontSize = 16.sp,
+                    onSave = { onUpdated(item.copy(pickupAddress = it)) })
+                // Show geo verification badge
+                Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (item.geoVerified) {
+                        AssistChip(
+                            onClick = {},
+                            label = {
+                                Text("📍 地图已验证", style = MaterialTheme.typography.labelSmall)
+                            },
+                            colors = AssistChipDefaults.assistChipColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer
+                            )
+                        )
+                        if (item.geoFormattedAddress.isNotBlank() && item.geoFormattedAddress != item.pickupAddress) {
+                            Text(
+                                item.geoFormattedAddress,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(start = 4.dp)
+                            )
+                        }
                     }
+                }
+                if (item.isActive) {
+                    InlineConfirm("地址正确", confirmed = addrConfirmed, incorrect = addrIncorrect,
+                        onCorrect = {
+                            addrConfirmed = true
+                            PatternLearner.setAddrConfirmed(ctx, item.id, true)
+                            scope.launch(Dispatchers.IO) {
+                                PatternLearner.recordAddressVerified(ctx, item.pickupAddress, 1.0f)
+                            }
+                        },
+                        onIncorrect = {
+                            addrIncorrect = true
+                            PatternLearner.setAddrIncorrect(ctx, item.id, true)
+                            scope.launch(Dispatchers.IO) {
+                                PatternLearner.recordAddressIncorrect(ctx, item.pickupAddress)
+                            }
+                        }
+                    )
                 }
             }
 
@@ -101,9 +183,52 @@ fun CodeDetailScreen(
 
             Text(formatTimestamp(item.timestamp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            if (item.isActive && onMarkDone != null) {
-                Button(onClick = { onMarkDone(item.id) }, modifier = Modifier.fillMaxWidth()) { Text("✓ 标记已取") }
+            if (item.isActive) {
+                val confirmAll: () -> Unit = {
+                    if (!codeConfirmed && !codeIncorrect) {
+                        codeConfirmed = true
+                        PatternLearner.setCodeConfirmed(ctx, item.id, true)
+                        scope.launch(Dispatchers.IO) { PatternLearner.recordVerified(ctx, CodeExtractor.getPatternId(item.code)) }
+                    }
+                    if (!sourceConfirmed && !sourceIncorrect) {
+                        sourceConfirmed = true
+                        PatternLearner.setSourceConfirmed(ctx, item.id, true)
+                        scope.launch(Dispatchers.IO) { PatternLearner.recordSourceMatch(ctx, item.source) }
+                    }
+                    if (item.pickupAddress.isNotBlank() && !addrConfirmed && !addrIncorrect) {
+                        addrConfirmed = true
+                        PatternLearner.setAddrConfirmed(ctx, item.id, true)
+                        scope.launch(Dispatchers.IO) { PatternLearner.recordAddressVerified(ctx, item.pickupAddress, 1.0f) }
+                    }
+                }
+                if (onMarkDone != null) {
+                    Button(onClick = { confirmAll(); onMarkDone(item.id) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("📦 标记已取")
+                    }
+                }
             }
+        }
+    }
+}
+
+@Composable
+private fun InlineConfirm(label: String, confirmed: Boolean, incorrect: Boolean, onCorrect: () -> Unit, onIncorrect: () -> Unit) {
+    if (confirmed || incorrect) {
+        Text(
+            if (confirmed) "$label ✓" else "已标记错误",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (confirmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+        )
+        return
+    }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = onCorrect, modifier = Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelSmall)
+        }
+        TextButton(onClick = onIncorrect, modifier = Modifier.weight(1f),
+            colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+        ) {
+            Text("标记错误", style = MaterialTheme.typography.labelSmall)
         }
     }
 }

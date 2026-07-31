@@ -13,6 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.pickupcode.app.learner.PatternLearner
 import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.Dispatchers
@@ -22,12 +23,14 @@ import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     val s by AppPreferences.observe(ctx).collectAsState(initial = AppPreferences.Settings())
     var apiUrl by remember { mutableStateOf(s.apiBaseUrl) }
     var apiKey by remember { mutableStateOf(s.apiKey) }
     var apiModel by remember { mutableStateOf(s.apiModel) }
+    var amapApiKey by remember { mutableStateOf(s.amapApiKey) }
+    var kuaidi100Key by remember { mutableStateOf(s.kuaidi100Key) }
     var keyVisible by remember { mutableStateOf(false) }
 
     Scaffold(topBar = { TopAppBar(title = { Text("设置") }, navigationIcon = {
@@ -47,6 +50,36 @@ fun SettingsScreen(onBack: () -> Unit) {
             item { Text("识别类型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { Switch("🥤 取餐码", checked = s.enableFoodCodes) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableFood(ctx, it) } } }
             item { Switch("📦 取件码", checked = s.enableParcelCodes) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableParcel(ctx, it) } } }
+            item { HorizontalDivider() }
+
+            item { Text("📥 外部接收", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { Text("从其他App分享或拖放到本应用时自动识别", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Switch("🔗 Intent 接收", sub = "接收来自其他App的分享（文本/图片）", checked = s.enableIntentReceive) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableIntentReceive(ctx, it) } } }
+            item { Switch("📤 分享识别", sub = "文本选择菜单/拖放直达时自动识别取餐取件码", checked = s.enableShareDetection) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableShareDetection(ctx, it) } } }
+            item { HorizontalDivider() }
+
+            item { Text("🗺️ 地图验证", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { Text("提取地址后自动查询地图验证真实性，辅助自学习评级", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Switch("启用地图验证", sub = if (s.enableMapVerify) "已启用" else "已关闭（隐私优先）", checked = s.enableMapVerify) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableMapVerify(ctx, it) } } }
+            if (s.enableMapVerify) {
+                item { Text("Android 地理编码器优先使用，无需配置。如需更高精度可填高德 API Key：", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item { OutlinedTextField(amapApiKey, { amapApiKey = it; scope.launch(Dispatchers.IO) { AppPreferences.setAmapApiKey(ctx, it) } }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("高德 API Key（可选）") }) }
+                item { AmapHelpSection() }
+            }
+            item { HorizontalDivider() }
+
+            item { Text("📮 快递100验证", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { Text("通过快递单号查询取件码和地址，验证OCR结果", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Switch("启用快递100验证", sub = if (s.enableKuaidi100) "已启用" else "已关闭", checked = s.enableKuaidi100) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableKuaidi100(ctx, it) } } }
+            if (s.enableKuaidi100) {
+                item { OutlinedTextField(kuaidi100Key, { kuaidi100Key = it; scope.launch(Dispatchers.IO) { AppPreferences.setKuaidi100Key(ctx, it) } }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("快递100 API Key") }) }
+                item { Kuaidi100HelpSection() }
+            }
+            item { HorizontalDivider() }
+
+            item { Text("📊 自学习统计", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { OutlinedButton(onClick = onStatsClick, modifier = Modifier.fillMaxWidth()) { Text("查看详细统计 →") } }
+            item { LearningStatsPanel(ctx, scope) }
             item { HorizontalDivider() }
 
             item { Text("🤖 AI 识别", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -75,6 +108,112 @@ fun SettingsScreen(onBack: () -> Unit) {
                 OutlinedButton(onClick = { checking = true; scope.launch { upStatus = checkUpdate(); checking = false } }, enabled = !checking) {
                     Text(if (checking) "检查中..." else "检查更新") }
                 upStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LearningStatsPanel(ctx: android.content.Context, scope: kotlinx.coroutines.CoroutineScope) {
+    var stats by remember { mutableStateOf<PatternLearner.PatternStats?>(null) }
+    var addrStats by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var suggestions by remember { mutableStateOf<List<PatternLearner.PatternSuggestion>>(emptyList()) }
+
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            stats = PatternLearner.getStats(ctx)
+            addrStats = PatternLearner.getAddressStats(ctx)
+            suggestions = PatternLearner.getSuggestions(ctx)
+        }
+    }
+
+    val s = stats
+    if (s == null || s.totalScans == 0) {
+        Text("暂无识别数据", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        return
+    }
+
+    val hitRate = if (s.attempts > 0) (s.attempts.toFloat() / s.totalScans * 100).roundToInt() else 0
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("扫描 ${s.totalScans} 次 · 命中 ${s.attempts} 次（${hitRate}%）· 漏检 ${s.misses} 次", style = MaterialTheme.typography.bodyMedium)
+        if (s.verified > 0) {
+            Text("已确认 ${s.verified} 次", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        }
+
+        if (s.perPattern.isNotEmpty()) {
+            Text("格式命中：", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            for ((p, n) in s.perPattern.entries.sortedByDescending { it.value }) {
+                Text("  $p : $n 次", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        val (addrOk, addrTotal) = addrStats ?: (0 to 0)
+        if (addrTotal > 0) {
+            val addrRate = (addrOk.toFloat() / addrTotal * 100).roundToInt()
+            Text("地址验证：$addrOk / $addrTotal（${addrRate}%）", style = MaterialTheme.typography.bodySmall)
+        }
+
+        if (suggestions.isNotEmpty()) {
+            Text("候选模式：", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+            for (sg in suggestions.take(3)) {
+                Text("  ${sg.label} — ${sg.count} 条未匹配", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                Text("  样例: ${sg.sampleCodes.joinToString("，")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("  建议: ${sg.proposedRegex}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+            }
+        }
+
+        TextButton(onClick = {
+            scope.launch(Dispatchers.IO) {
+                PatternLearner.clearUnmatched(ctx)
+                suggestions = PatternLearner.getSuggestions(ctx)
+            }
+        }) { Text("清除未匹配样本", style = MaterialTheme.typography.labelSmall) }
+    }
+}
+
+@Composable
+private fun AmapHelpSection() {
+    var expanded by remember { mutableStateOf(false) }
+    Column {
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "收起说明 ▲" else "如何获取高德 API Key？▼", style = MaterialTheme.typography.labelMedium)
+        }
+        if (expanded) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("1. 打开浏览器访问", style = MaterialTheme.typography.bodySmall)
+                    Text("   https://console.amap.com/", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    Text("2. 注册/登录高德开放平台账号", style = MaterialTheme.typography.bodySmall)
+                    Text("3. 进入「应用管理 → 我的应用」→ 创建应用", style = MaterialTheme.typography.bodySmall)
+                    Text("4. 为应用添加 Key，服务平台选择「Web服务」", style = MaterialTheme.typography.bodySmall)
+                    Text("5. 复制生成的 Key 粘贴到上方输入框", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text("免费额度：每日 3000 次地理编码，个人使用完全够用", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun Kuaidi100HelpSection() {
+    var expanded by remember { mutableStateOf(false) }
+    Column {
+        TextButton(onClick = { expanded = !expanded }) {
+            Text(if (expanded) "收起说明 ▲" else "如何获取快递100 API Key？▼", style = MaterialTheme.typography.labelMedium)
+        }
+        if (expanded) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("1. 打开浏览器访问", style = MaterialTheme.typography.bodySmall)
+                    Text("   https://api.kuaidi100.com/", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+                    Text("2. 注册/登录快递100开放平台", style = MaterialTheme.typography.bodySmall)
+                    Text("3. 进入「企业管理 → 我的授权Key」", style = MaterialTheme.typography.bodySmall)
+                    Text("4. 复制 Customer Key 粘贴到上方输入框", style = MaterialTheme.typography.bodySmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text("用途：OCR 提取到单号后，通过API反向查取件码和地址作为标准答案", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("用于验证 OCR 提取结果是否正确，辅助自学习", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
