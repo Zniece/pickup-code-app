@@ -119,6 +119,6 @@ sdkmanager "build-tools;34.0.0" "platforms;android-35"
 
 | 功能 | 入口 | 说明 |
 |------|------|------|
-| AI 增强识别 | 设置 → AI 识别 | 任意 OpenAI 兼容 API 的 Base URL、Key、模型名 |
-| 地图验证 | 设置 → 地图验证 | 高德开放平台 Key |
-| 快递100 验证 | 设置 → 快递100 | 快递100 开放平台 Key |
+| AI 增强识别 | 设置 → AI 识别 | 任意 OpenAI 兼容 API 的 API 地址、API Key、模型名称 |
+| 地图验证 | 设置 → 地图验证 | 高德 API Key（可选） |
+| 快递100 验证 | 设置 → 快递100验证 | 快递100 API Key |
