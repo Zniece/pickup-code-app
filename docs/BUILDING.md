@@ -60,17 +60,31 @@ gradle wrapper --gradle-version 8.9 --distribution-type bin
 
 ## 构建产物
 
-Debug APK 输出到：
+Debug APK 输出到 `app/build/outputs/apk/debug/`。项目开启了 ABI 拆分（仅保留 arm64-v8a 与 armeabi-v7a），因此会生成两个按架构拆分的 APK：
 
-```
-app/build/outputs/apk/debug/app-debug.apk
+```text
+app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
+app/build/outputs/apk/debug/app-armeabi-v7a-debug.apk
 ```
 
-将 APK 安装到设备即可使用（Debug 包使用自动签名，可直接 `adb install`）：
+将 APK 安装到设备即可使用（Debug 包使用自动签名，可直接 `adb install`，按你的设备架构选择对应文件）：
 
 ```bash
-adb install app/build/outputs/apk/debug/app-debug.apk
+adb install app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
 ```
+
+## Release 构建签名（可选）
+
+Release 包在未配置签名时按 **unsigned** 构建（便于 CI / 无密钥环境编译）。如需正式签名，在项目根目录创建 `keystore.properties`（已被 `.gitignore` 忽略，不会提交到仓库）：
+
+```properties
+STORE_FILE=/path/to/your.keystore
+STORE_PASSWORD=存储密码
+KEY_ALIAS=你的别名
+KEY_PASSWORD=密钥密码
+```
+
+也可用同名环境变量（`PICKUP_STORE_FILE` / `PICKUP_STORE_PASSWORD` / `PICKUP_KEY_ALIAS` / `PICKUP_KEY_PASSWORD`）替代。配置齐全后 `./gradlew assembleRelease` 自动使用该签名；同时 Release 构建启用了 R8 混淆与资源收缩（shrinkResources）。
 
 ## 常见问题（FAQ）
 
