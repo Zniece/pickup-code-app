@@ -6,3 +6,4 @@ local.properties
 *.iml
 *.pyc
 __pycache__/
+.scratch/

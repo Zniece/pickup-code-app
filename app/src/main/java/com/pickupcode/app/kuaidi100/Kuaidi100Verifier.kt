@@ -44,31 +44,35 @@ object Kuaidi100Verifier {
             }
             val url = URL("$API_URL?$params")
             val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = 8000
-            conn.readTimeout = 8000
-            conn.requestMethod = "GET"
+            try {
+                conn.connectTimeout = 8000
+                conn.readTimeout = 8000
+                conn.requestMethod = "GET"
 
-            if (conn.responseCode != 200) {
-                Log.w(TAG, "API returned HTTP ${conn.responseCode}")
-                return@withContext KuaidiResult(false, null, null, null, "HTTP ${conn.responseCode}")
+                if (conn.responseCode != 200) {
+                    Log.w(TAG, "API returned HTTP ${conn.responseCode}")
+                    return@withContext KuaidiResult(false, null, null, null, "HTTP ${conn.responseCode}")
+                }
+
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+
+                val code = json.optInt("returnCode", -1)
+                if (code != 200) {
+                    return@withContext KuaidiResult(false, null, null, null, json.optString("message", "API error"))
+                }
+
+                val data = json.optJSONObject("data") ?: return@withContext KuaidiResult(false, null, null, null, "No data")
+                KuaidiResult(
+                    success = true,
+                    pickUpCode = data.optString("pickUpCode", null).takeIf { it.isNotBlank() },
+                    pickUpStation = data.optString("pickUpStation", null).takeIf { it.isNotBlank() },
+                    pickUpAddress = data.optString("pickUpAddress", null).takeIf { it.isNotBlank() },
+                    errorMsg = null
+                )
+            } finally {
+                conn.disconnect()
             }
-
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(body)
-
-            val code = json.optInt("returnCode", -1)
-            if (code != 200) {
-                return@withContext KuaidiResult(false, null, null, null, json.optString("message", "API error"))
-            }
-
-            val data = json.optJSONObject("data") ?: return@withContext KuaidiResult(false, null, null, null, "No data")
-            KuaidiResult(
-                success = true,
-                pickUpCode = data.optString("pickUpCode", null).takeIf { it.isNotBlank() },
-                pickUpStation = data.optString("pickUpStation", null).takeIf { it.isNotBlank() },
-                pickUpAddress = data.optString("pickUpAddress", null).takeIf { it.isNotBlank() },
-                errorMsg = null
-            )
         } catch (e: Exception) {
             Log.e(TAG, "Query failed: ${e.message}")
             KuaidiResult(false, null, null, null, e.message)

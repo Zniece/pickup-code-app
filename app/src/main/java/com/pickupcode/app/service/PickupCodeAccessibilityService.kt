@@ -135,7 +135,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
     /** 仅节点文字模式（API < 30兜底），不存截图 */
     private fun performScanFromText(source: String) {
-        scope.launch {
+        // 无障碍树递归 + 正则 + 学习文件 IO 均放 IO/Default，避免旧设备主线程卡顿
+        scope.launch(Dispatchers.Default) {
             val settings = AppPreferences.observe(this@PickupCodeAccessibilityService).first()
             val allText = collectAllText()
             val lines = allText.lines().map { OCREngine.TextLine(it, null, null) }

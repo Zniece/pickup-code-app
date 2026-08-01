@@ -45,9 +45,10 @@ object AIExtractor {
         apiBaseUrl: String = "https://api.openai.com/v1",
         model: String = "gpt-4o-mini"
     ): AIExtractResult = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
             val url = URL("${apiBaseUrl.trimEnd('/')}/chat/completions")
-            val conn = url.openConnection() as HttpURLConnection
+            conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")
             conn.setRequestProperty("Authorization", "Bearer $apiKey")
@@ -79,7 +80,6 @@ object AIExtractor {
             }
 
             val response = conn.inputStream.bufferedReader().readText()
-            conn.disconnect()
 
             val json = JSONObject(response)
             val content = json.getJSONArray("choices")
@@ -111,6 +111,8 @@ object AIExtractor {
         } catch (e: Exception) {
             Log.e("AIExtractor", "AI识别异常", e)
             AIExtractResult(error = e.message ?: "AI调用失败")
+        } finally {
+            conn?.disconnect()
         }
     }
 }

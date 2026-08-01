@@ -296,6 +296,7 @@ private suspend fun checkUpdate(): String = withContext(Dispatchers.IO) {
         resp = java.net.URL("https://api.github.com/repos/zixij644-elaborate/pickup-code-app/releases/latest")
             .openConnection() as java.net.HttpURLConnection
         resp.requestMethod = "GET"; resp.setRequestProperty("Accept", "application/vnd.github.v3+json")
+        resp.setRequestProperty("User-Agent", "pickup-code-app-checkupdate")
         resp.connectTimeout = 10000; resp.readTimeout = 10000
         if (resp.responseCode != 200) return@withContext "检查失败"
         val latest = org.json.JSONObject(resp.inputStream.bufferedReader().use { it.readText() }).getString("tag_name").removePrefix("v")

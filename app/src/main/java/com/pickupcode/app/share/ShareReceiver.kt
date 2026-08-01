@@ -2,6 +2,7 @@ package com.pickupcode.app.share
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
@@ -10,12 +11,12 @@ import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.geocoder.GeocoderVerifier
+import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
 import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -54,41 +55,41 @@ object ShareReceiver {
                 return@launch
             }
             Log.d(TAG, "Received: action=$action, type=${intent.type}")
-            dispatch(context, intent, isProcessText)
+            dispatch(context, intent, isProcessText, scope)
         }
     }
 
-    private suspend fun dispatch(context: Context, intent: Intent, isProcessText: Boolean) {
+    private suspend fun dispatch(context: Context, intent: Intent, isProcessText: Boolean, scope: CoroutineScope) {
         if (isProcessText) {
             val text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
-            if (!text.isNullOrBlank()) processText(context, text, "TextSelection")
+            if (!text.isNullOrBlank()) processText(context, text, "TextSelection", scope)
         } else when {
             intent.type?.startsWith("text/") == true -> {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-                if (!text.isNullOrBlank()) processText(context, text, "SharedText")
+                if (!text.isNullOrBlank()) processText(context, text, "SharedText", scope)
             }
             intent.type?.startsWith("image/") == true -> {
                 val uri: Uri? = intent.getParcelableExtra(Intent.EXTRA_STREAM)
                     ?: intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                if (uri != null) processImage(context, uri, "SharedImage")
+                if (uri != null) processImage(context, uri, "SharedImage", scope)
             }
         }
     }
 
-    private suspend fun processText(context: Context, text: String, sourceLabel: String) {
+    private suspend fun processText(context: Context, text: String, sourceLabel: String, scope: CoroutineScope) {
         val lines = text.lines().map { line ->
             OCREngine.TextLine(text = line.trim(), boundingBox = null, confidence = 1.0f)
         }.filter { it.text.isNotBlank() }
         if (lines.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
         val address = CodeExtractor.extractAddress(lines, allText)
-        extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address)
+        extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address, scope)
     }
 
-    private suspend fun processImage(context: Context, uri: Uri, sourceLabel: String) {
+    private suspend fun processImage(context: Context, uri: Uri, sourceLabel: String, scope: CoroutineScope) {
         val bitmap = withContext(Dispatchers.IO) {
             try {
-                context.contentResolver.openInputStream(uri)?.use { s -> BitmapFactory.decodeStream(s) }
+                decodeSampledBitmap(context, uri)
             } catch (e: Exception) {
                 Log.e(TAG, "Read image failed: ${e.message}")
                 null
@@ -125,7 +126,7 @@ object ShareReceiver {
         val allText = lines.joinToString(" ") { it.text }
         val address = CodeExtractor.extractAddress(lines, allText)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
-        extractAndNotify(context, lines, snippet, screenshotPath, address)
+        extractAndNotify(context, lines, snippet, screenshotPath, address, scope)
     }
 
     private suspend fun extractAndNotify(
@@ -133,7 +134,8 @@ object ShareReceiver {
         lines: List<OCREngine.TextLine>,
         rawSnippet: String,
         screenshotPath: String = "",
-        address: String = ""
+        address: String = "",
+        scope: CoroutineScope
     ) {
         val allText = lines.joinToString(" ") { it.text }
         val db = AppDatabase.getInstance(context)
@@ -150,7 +152,7 @@ object ShareReceiver {
 
         // AI 异步并行合并（同码同 type 去重；格式已由 isValidPickupCode 把关）
         if (settings.enableAI && settings.apiKey.isNotBlank()) {
-            val aiDeferred = GlobalScope.async(Dispatchers.IO) {
+            val aiDeferred = scope.async(Dispatchers.IO) {
                 AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
             }
             try {
@@ -200,7 +202,7 @@ object ShareReceiver {
 
             // Async address geocoding verification
             if (address.isNotBlank() && settings.enableMapVerify) {
-                GlobalScope.launch(Dispatchers.IO) {
+                scope.launch(Dispatchers.IO) {
                     try {
                         val geoResult = GeocoderVerifier.verify(
                             context, address,
@@ -222,11 +224,58 @@ object ShareReceiver {
                 }
             }
         }
+
+        // 快递100 反向验证：识别到运单号时反查取件码/地址作为标准答案（fire-and-forget，与无障碍路径一致）
+        if (settings.enableKuaidi100 && settings.kuaidi100Key.isNotBlank()) {
+            val trackingNum = CodeExtractor.findOrderNumber(allText)
+            if (trackingNum != null) {
+                scope.launch(Dispatchers.IO) {
+                    try {
+                        val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum)
+                        Log.d(TAG, "Kuaidi100 verify: success=${res.success} code=${res.pickUpCode} address=${res.pickUpAddress} err=${res.errorMsg}")
+                        if (res.success && res.pickUpCode != null) {
+                            val ocrCodes = allResults.map { it.code }
+                            if (ocrCodes.contains(res.pickUpCode)) {
+                                Log.d(TAG, "Kuaidi100 confirm: OCR码 ${res.pickUpCode} 与 API 一致 ✓")
+                            } else {
+                                Log.d(TAG, "Kuaidi100 mismatch: OCR=${ocrCodes}, API=${res.pickUpCode}")
+                            }
+                            if (res.pickUpAddress.isNullOrBlank().not()) {
+                                val rec = db.codeHistoryDao().findByCodeAndType(res.pickUpCode, CodeExtractor.CodeType.pickup_parcel.name)
+                                if (rec != null && rec.pickupAddress.isBlank()) {
+                                    db.codeHistoryDao().update(rec.copy(pickupAddress = res.pickUpAddress))
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Kuaidi100 verify error: ${e.message}")
+                    }
+                }
+            }
+        }
     }
 
     /** 该类型是否被用户关闭（抽取共用，避免在多个分支重复 switch） */
     private fun isTypeDisabled(type: CodeExtractor.CodeType, settings: AppPreferences.Settings): Boolean = when (type) {
         CodeExtractor.CodeType.pickup_food -> !settings.enableFoodCodes
         CodeExtractor.CodeType.pickup_parcel -> !settings.enableParcelCodes
+    }
+
+    /** 降采样解码分享图片：先读尺寸按 inSampleSize 缩放，避免 4000×3000 全尺寸解码 OOM。 */
+    private fun decodeSampledBitmap(context: Context, uri: Uri): Bitmap? {
+        // 第一遍：只读边界拿尺寸（不分配像素）
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        // 计算采样倍数：目标最长边 ~1600px（OCR 分辨率足够，兼顾内存）
+        var sample = 1
+        var dim = maxOf(bounds.outWidth, bounds.outHeight)
+        while (dim / 2 >= 1600) { sample *= 2; dim /= 2 }
+
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample
+        }
+        return context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
     }
 }
