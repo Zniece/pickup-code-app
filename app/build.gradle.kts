@@ -5,6 +5,19 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
+// 读取本地签名配置（keystore.properties 已 .gitignore，不进仓库)
+import java.util.Properties
+
+val keystoreProperties = Properties().apply {
+    val f = rootProject.file("keystore.properties")
+    if (f.exists()) load(f.inputStream())
+}
+
+fun String?.orEnv(name: String): String? = this?.ifBlank { null } ?: System.getenv(name)
+
+// 标记 release 签名是否可用（有 keystore.properties 且文件存在）
+var storeFileConfigured = false
+
 android {
     namespace = "com.pickupcode.app"
     compileSdk = 35
@@ -13,14 +26,43 @@ android {
         applicationId = "com.pickupcode.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 19
-        versionName = "1.0.4"
+        versionCode = 20
+        versionName = "1.0.5"
+    }
+
+    signingConfigs {
+        create("release") {
+            val cfgStoreFile = keystoreProperties.getProperty("STORE_FILE")?.orEnv("PICKUP_STORE_FILE")
+            val cfgStorePw = keystoreProperties.getProperty("STORE_PASSWORD")?.orEnv("PICKUP_STORE_PASSWORD")
+            val cfgKeyAlias = keystoreProperties.getProperty("KEY_ALIAS")?.orEnv("PICKUP_KEY_ALIAS")
+            val cfgKeyPw = keystoreProperties.getProperty("KEY_PASSWORD")?.orEnv("PICKUP_KEY_PASSWORD")
+            // 签名文件存在且有密码才配置（否则 release 走 unsigned，避免 CI/无密钥环境炸构建）
+            if (cfgStoreFile != null && File(cfgStoreFile).exists() && !cfgStorePw.isNullOrEmpty()) {
+                storeFile = file(cfgStoreFile)
+                storePassword = cfgStorePw
+                keyAlias = cfgKeyAlias ?: "pickup"
+                keyPassword = cfgKeyPw ?: cfgStorePw
+                storeFileConfigured = true
+            }
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = if (storeFileConfigured) signingConfigs.getByName("release") else null
+        }
+    }
+
+    // 按 CPU 架构拆分：只打真机常用的 arm64/armv7，砍掉 x86 等用不上的原生库，显著减重
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a")
+            isUniversalApk = false
         }
     }
 

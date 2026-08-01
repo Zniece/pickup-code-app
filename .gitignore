@@ -7,3 +7,7 @@ local.properties
 *.pyc
 __pycache__/
 .scratch/
+# 签名密钥与凭据（绝不提交仓库）：本地签名文件 + 读取的 properties
+*.keystore
+*.jks
+keystore.properties
