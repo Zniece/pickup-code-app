@@ -77,11 +77,11 @@ app/src/main/java/com/pickupcode/app/
 ├── data/                  # 数据层：Room 实体 + DAO(去重/回收站/归档)
 │   ├── CodeHistory.kt
 │   └── CodeHistoryDao.kt
-├── extractor/             # 识别核心
-│   ├── CodeExtractor.kt   #   取件/取餐码 正则+评分+地址S0~S10管线
-│   ├── AIExtractor.kt     #   OpenAI 兼容 AI 提取
-│   └── CouponDetector.kt  #   券码(二维码)检测+解码
-├── ocr/OCREngine.kt       # ML Kit 文本识别
+├── extractor/             #  识别核心
+│   ├── CodeExtractor.kt   #  取件/取餐码 正则+评分+地址S0~S10管线
+│   ├── AIExtractor.kt     #  OpenAI 兼容 AI 提取
+│   └── CouponDetector.kt  #  券码(二维码)检测+解码
+├── ocr/OCREngine.kt       #  ML Kit 文本识别
 ├── learner/PatternLearner.kt  # 自学习：自动生成正则/统计
 ├── geocoder/GeocoderVerifier.kt   # 地址地理编码验证
 ├── kuaidi100/Kuaidi100Verifier.kt # 快递100 运单反查
