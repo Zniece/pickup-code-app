@@ -65,7 +65,7 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { Text("识别类型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { Switch("🥤 取餐码", checked = s.enableFoodCodes) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableFood(ctx, it) } } }
             item { Switch("📦 取件码", checked = s.enableParcelCodes) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableParcel(ctx, it) } } }
-            item { Switch("🎫 券码", sub = "识别屏幕/图片中的二维码或条码（解码内容为码值，默认关闭）", checked = s.enableCouponCodes) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableCoupon(ctx, it) } } }
+            item { Switch("🎫 券码", sub = "识别屏幕/图片中的二维码（解码内容为码值；识别到则只标券码，不叠加取餐/取件码）", checked = s.enableCouponCodes) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableCoupon(ctx, it) } } }
             item { HorizontalDivider() }
 
             item { Text("📥 外部接收", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
