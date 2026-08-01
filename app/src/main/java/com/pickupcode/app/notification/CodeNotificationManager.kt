@@ -13,6 +13,7 @@ object CodeNotificationManager {
 
     private const val CHANNEL_FOOD = "pickup_food"
     private const val CHANNEL_PARCEL = "pickup_parcel"
+    private const val CHANNEL_COUPON = "pickup_coupon"
 
     fun createChannels(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -28,6 +29,12 @@ object CodeNotificationManager {
                 setShowBadge(true)
             }
         )
+        manager.createNotificationChannel(
+            NotificationChannel(CHANNEL_COUPON, "券码", NotificationManager.IMPORTANCE_HIGH).apply {
+                description = "二维码/条码券码提醒"
+                setShowBadge(true)
+            }
+        )
     }
 
     private fun safeId(code: String): Int = code.hashCode() and 0x7fffffff
@@ -37,6 +44,7 @@ object CodeNotificationManager {
     private fun typeStyle(type: CodeExtractor.CodeType): TypeStyle = when (type) {
         CodeExtractor.CodeType.pickup_parcel -> TypeStyle(CHANNEL_PARCEL, "\uD83D\uDCE6", "取件码")
         CodeExtractor.CodeType.pickup_food -> TypeStyle(CHANNEL_FOOD, "\uD83E\uDD64", "取餐码")
+        CodeExtractor.CodeType.coupon -> TypeStyle(CHANNEL_COUPON, "\uD83C\uDF9F\uFE0F", "券码")
     }
 
     fun show(context: Context, code: String, type: CodeExtractor.CodeType, source: String, historyId: Long? = null) {

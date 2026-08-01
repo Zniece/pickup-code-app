@@ -55,6 +55,8 @@ dependencies {
 
     // ML Kit Text Recognition (offline, free)
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    // ML Kit Barcode Scanning (bundled, offline, detects+decodes QR/barcode)
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
 
     // Room for history storage

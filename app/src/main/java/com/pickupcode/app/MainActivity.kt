@@ -468,7 +468,11 @@ fun CodeHistoryCard(
                 )
             }
             Text(
-                if (item.type == "pickup_food") "🥤" else "📦",
+                when (item.type) {
+                    "pickup_food" -> "🥤"
+                    "coupon" -> "🎟️"
+                    else -> "📦"
+                },
                 style = MaterialTheme.typography.headlineMedium
             )
             if (onDone != null) {

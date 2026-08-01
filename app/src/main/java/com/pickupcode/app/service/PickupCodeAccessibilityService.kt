@@ -15,6 +15,7 @@ import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.CouponDetector
 import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
 import com.pickupcode.app.learner.PatternLearner
@@ -193,10 +194,14 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                         scope.launch(Dispatchers.IO) {
                             try {
                                 val lines = OCREngine.recognize(bmp)
+                                val settings = AppPreferences.observe(this@PickupCodeAccessibilityService).first()
+                                // 券码检测（需在 recycle 前用同一张 bitmap）
+                                val coupons = if (settings.enableCouponCodes) {
+                                    CouponDetector.detect(bmp)
+                                } else emptyList()
                                 bmp.recycle()
                                 val allText = lines.joinToString("\n") { it.text }
-                                val settings = AppPreferences.observe(this@PickupCodeAccessibilityService).first()
-                                tryExtract(allText, lines, path, settings, source)
+                                tryExtract(allText, lines, path, settings, source, coupons)
                             } catch (e: Exception) {
                                 Log.e(TAG, "OCR失败", e)
                                 try { bmp.recycle() } catch (_: Exception) {}
@@ -213,26 +218,39 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             })
     }
 
-    private suspend fun tryExtract(allText: String, ocrLines: List<OCREngine.TextLine>, screenshotPath: String, settings: AppPreferences.Settings, source: String) {
+    private suspend fun tryExtract(allText: String, ocrLines: List<OCREngine.TextLine>, screenshotPath: String, settings: AppPreferences.Settings, source: String, coupons: List<CouponDetector.CouponResult> = emptyList()) {
         val allResults = mutableListOf<Pair<String, CodeExtractor.CodeType>>()
         val codeSources = mutableMapOf<String, String>()
 
-        // AI（需要总开关开启 + API Key 非空）——异步并行，不阻塞正则主链
-        // 正则先跑、立即出结果；AI 结果到了再合并，最慢 15s 超时也不拖慢主流程（问题1）
-        val aiDeferred = if (settings.enableAI && settings.apiKey.isNotBlank()) {
+        // 券码：检测到二维码/条码并解码，code = 解码内容（不需要 OCR）
+        var hasCoupon = false
+        if (settings.enableCouponCodes) {
+            for (c in coupons) {
+                val v = c.rawValue?.trim()
+                if (v.isNullOrBlank()) continue
+                val key = "$v|${CodeExtractor.CodeType.coupon}"
+                if (allResults.any { "${it.first}|${it.second}" == key }) continue
+                allResults.add(v to CodeExtractor.CodeType.coupon)
+                codeSources[v] = "券码"
+                hasCoupon = true
+            }
+        }
+
+        // 识别到券码后互斥：不再做取餐码/取件码的识别与标注
+        val aiDeferred = if (!hasCoupon && settings.enableAI && settings.apiKey.isNotBlank()) {
             scope.async(Dispatchers.IO) {
                 AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
             }
         } else null
 
-        // 正则（总是运行，主路径先行）
-        val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this)
-        var regexHit = false
-        for (re in regexResults) {
-            if (re.confidence >= settings.confidenceThreshold && isTypeEnabled(re.type, settings)) {
-                allResults.add(re.code to re.type)
-                codeSources[re.code] = re.source
-                regexHit = true
+        // 正则（无券码时运行）
+        if (!hasCoupon) {
+            val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this)
+            for (re in regexResults) {
+                if (re.confidence >= settings.confidenceThreshold && isTypeEnabled(re.type, settings)) {
+                    allResults.add(re.code to re.type)
+                    codeSources[re.code] = re.source
+                }
             }
         }
 
@@ -345,6 +363,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         return when (type) {
             CodeExtractor.CodeType.pickup_food -> settings.enableFoodCodes
             CodeExtractor.CodeType.pickup_parcel -> settings.enableParcelCodes
+            CodeExtractor.CodeType.coupon -> settings.enableCouponCodes
         }
     }
 

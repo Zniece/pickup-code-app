@@ -9,7 +9,7 @@ import com.pickupcode.app.ocr.OCREngine
 object CodeExtractor {
 
     data class ExtractedCode(val code: String, val type: CodeType, val source: String, val confidence: Float)
-    enum class CodeType { pickup_food, pickup_parcel }
+    enum class CodeType { pickup_food, pickup_parcel, coupon }
     enum class StationType { LOCKER, PICKUP_POINT, UNKNOWN }
     data class PickupLocation(
         val stationName: String,
@@ -249,9 +249,9 @@ object CodeExtractor {
                         } else if (!kw && !big) return@matchLoop
                     }
 
-                    val ctxOk = when (rule.type) { CodeType.pickup_food -> isFoodContext; CodeType.pickup_parcel -> isParcelContext }
+                    val ctxOk = when (rule.type) { CodeType.pickup_food -> isFoodContext; CodeType.pickup_parcel -> isParcelContext; CodeType.coupon -> false }
                     if (ctxOk) s += rule.ctxBonus
-                    val conflict = when (rule.type) { CodeType.pickup_food -> isParcelContext && !isFoodContext; CodeType.pickup_parcel -> isFoodContext && !isParcelContext }
+                    val conflict = when (rule.type) { CodeType.pickup_food -> isParcelContext && !isFoodContext; CodeType.pickup_parcel -> isFoodContext && !isParcelContext; CodeType.coupon -> false }
                     if (conflict) s -= 8f
 
                     candidates.add(Candidate(m.value, rule.type, s, sourceFromLine(line,

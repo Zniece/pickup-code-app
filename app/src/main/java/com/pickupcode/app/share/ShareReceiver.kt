@@ -10,6 +10,7 @@ import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.CouponDetector
 import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
 import com.pickupcode.app.notification.CodeNotificationManager
@@ -112,21 +113,25 @@ object ShareReceiver {
             }
         }
 
-        val lines = withContext(Dispatchers.Default) {
+        // OCR + 券码检测（都在 recycle 前用同一张 bitmap）
+        var lines: List<OCREngine.TextLine> = emptyList()
+        var coupons: List<CouponDetector.CouponResult> = emptyList()
+        withContext(Dispatchers.Default) {
             try {
-                OCREngine.recognize(bitmap)
+                lines = OCREngine.recognize(bitmap)
+                coupons = CouponDetector.detect(bitmap)
             } catch (e: Exception) {
                 Log.e(TAG, "OCR failed: ${e.message}")
-                emptyList()
             } finally {
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
         }
-        if (lines.isEmpty()) return
+        // 无 OCR 文本且无券码 → 无内容
+        if (lines.isEmpty() && coupons.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
         val address = CodeExtractor.extractAddress(lines, allText)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
-        extractAndNotify(context, lines, snippet, screenshotPath, address, scope)
+        extractAndNotify(context, lines, snippet, screenshotPath, address, scope, coupons)
     }
 
     private suspend fun extractAndNotify(
@@ -135,37 +140,53 @@ object ShareReceiver {
         rawSnippet: String,
         screenshotPath: String = "",
         address: String = "",
-        scope: CoroutineScope
+        scope: CoroutineScope,
+        coupons: List<CouponDetector.CouponResult> = emptyList()
     ) {
         val allText = lines.joinToString(" ") { it.text }
         val db = AppDatabase.getInstance(context)
         val settings = withContext(Dispatchers.IO) { AppPreferences.observe(context).first() }
-
-        // 正则主路径先行（问题3：分享路径接入 AI，但不阻塞）
-        val regexResults = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context) }
         val allResults = mutableListOf<CodeExtractor.ExtractedCode>()
-        for (re in regexResults) {
-            if (re.confidence >= settings.confidenceThreshold && !isTypeDisabled(re.type, settings)) {
-                allResults.add(re)
+
+        // 券码：检测到二维码/条码并解码，code = 解码内容；不需要正则
+        var hasCoupon = false
+        if (settings.enableCouponCodes) {
+            for (c in coupons) {
+                val v = c.rawValue?.trim()
+                if (v.isNullOrBlank()) continue
+                if (allResults.any { it.code == v && it.type == CodeExtractor.CodeType.coupon }) continue
+                allResults.add(CodeExtractor.ExtractedCode(v, CodeExtractor.CodeType.coupon, "券码", 1.0f))
+                hasCoupon = true
             }
         }
 
-        // AI 异步并行合并（同码同 type 去重；格式已由 isValidPickupCode 把关）
-        if (settings.enableAI && settings.apiKey.isNotBlank()) {
-            val aiDeferred = scope.async(Dispatchers.IO) {
-                AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
-            }
-            try {
-                val aiRes = aiDeferred.await()
-                if (aiRes.error != null) Log.w(TAG, "AI 识别失败: ${aiRes.error}")
-                for (ai in aiRes.results) {
-                    if (isTypeDisabled(ai.type, settings)) continue
-                    if (allResults.any { it.code == ai.code && it.type == ai.type }) continue // 同码同type去重
-                    // 构造与正则同结构的 ExtractedCode，source 用 AI 识别结果
-                    allResults.add(CodeExtractor.ExtractedCode(ai.code, ai.type, ai.source, 1.0f))
+        // 识别到券码后互斥：不再做取餐码/取件码的识别与标注（避免券码+OCR码重复/误标）
+        if (!hasCoupon) {
+            // 正则主路径先行（问题3：分享路径接入 AI，但不阻塞）
+            val regexResults = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context) }
+            for (re in regexResults) {
+                if (re.confidence >= settings.confidenceThreshold && !isTypeDisabled(re.type, settings)) {
+                    allResults.add(re)
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "AI 结果合并异常: ${e.message}")
+            }
+
+            // AI 异步并行合并（同码同 type 去重；格式已由 isValidPickupCode 把关）
+            if (settings.enableAI && settings.apiKey.isNotBlank()) {
+                val aiDeferred = scope.async(Dispatchers.IO) {
+                    AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
+                }
+                try {
+                    val aiRes = aiDeferred.await()
+                    if (aiRes.error != null) Log.w(TAG, "AI 识别失败: ${aiRes.error}")
+                    for (ai in aiRes.results) {
+                        if (isTypeDisabled(ai.type, settings)) continue
+                        if (allResults.any { it.code == ai.code && it.type == ai.type }) continue // 同码同type去重
+                        // 构造与正则同结构的 ExtractedCode，source 用 AI 识别结果
+                        allResults.add(CodeExtractor.ExtractedCode(ai.code, ai.type, ai.source, 1.0f))
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "AI 结果合并异常: ${e.message}")
+                }
             }
         }
 
@@ -259,6 +280,7 @@ object ShareReceiver {
     private fun isTypeDisabled(type: CodeExtractor.CodeType, settings: AppPreferences.Settings): Boolean = when (type) {
         CodeExtractor.CodeType.pickup_food -> !settings.enableFoodCodes
         CodeExtractor.CodeType.pickup_parcel -> !settings.enableParcelCodes
+        CodeExtractor.CodeType.coupon -> !settings.enableCouponCodes
     }
 
     /** 降采样解码分享图片：先读尺寸按 inSampleSize 缩放，避免 4000×3000 全尺寸解码 OOM。 */

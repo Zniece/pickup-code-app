@@ -59,8 +59,16 @@ fun CodeDetailScreen(
             Card(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("类型", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val label = if (item.type == "pickup_parcel") "取件码" else "取餐码"
-                    val icon = if (item.type == "pickup_parcel") "📦" else "🥤"
+                    val label = when (item.type) {
+                        "pickup_parcel" -> "取件码"
+                        "coupon" -> "券码"
+                        else -> "取餐码"
+                    }
+                    val icon = when (item.type) {
+                        "pickup_parcel" -> "📦"
+                        "coupon" -> "🎟️"
+                        else -> "🥤"
+                    }
                     Text("$icon $label", fontSize = 18.sp)
                 }
             }
@@ -152,14 +160,6 @@ fun CodeDetailScreen(
                 }
             }
 
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("OCR 原始文本", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                    Text(item.rawTextSnippet.ifBlank { "（无原始数据）" }, style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
-                }
-            }
 
             var showFullscreen by remember { mutableStateOf(false) }
             if (item.screenshotPath.isNotBlank() && File(item.screenshotPath).exists()) {
@@ -179,6 +179,15 @@ fun CodeDetailScreen(
                 if (showFullscreen) {
                     AlertDialog(onDismissRequest = { showFullscreen = false }, confirmButton = { TextButton(onClick = { showFullscreen = false }) { Text("关闭") } },
                         text = { bitmap?.let { bmp -> Image(bitmap = bmp.asImageBitmap(), contentDescription = "截屏全屏", modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth) } })
+                }
+            }
+
+            Card(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("OCR 原始文本", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    Text(item.rawTextSnippet.ifBlank { "（无原始数据）" }, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 20.sp)
                 }
             }
 

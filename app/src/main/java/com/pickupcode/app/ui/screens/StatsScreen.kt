@@ -306,7 +306,11 @@ private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>) {
                         )
                     }
                     Text(
-                        if (rule.type == "pickup_food") "🥤" else "📦",
+                        when (rule.type) {
+                            "pickup_food" -> "🥤"
+                            "coupon" -> "🎫"
+                            else -> "📦"
+                        },
                         style = MaterialTheme.typography.titleMedium
                     )
                 }

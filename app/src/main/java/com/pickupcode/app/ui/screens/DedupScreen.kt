@@ -89,7 +89,11 @@ private fun DuplicateGroupCard(entries: List<CodeHistory>, onChanged: () -> Unit
 
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
-            val icon = if (type == "pickup_food") "🥤" else "📦"
+            val icon = when (type) {
+                "pickup_food" -> "🥤"
+                "coupon" -> "🎟️"
+                else -> "📦"
+            }
             Text("$icon $code  (${entries.size} 条重复)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(4.dp))
 

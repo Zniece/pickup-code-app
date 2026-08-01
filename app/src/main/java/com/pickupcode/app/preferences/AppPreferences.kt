@@ -18,6 +18,7 @@ object AppPreferences {
     private val KEY_CONFIDENCE_THRESHOLD = floatPreferencesKey("confidence_threshold")
     private val KEY_ENABLE_FOOD = booleanPreferencesKey("enable_food")
     private val KEY_ENABLE_PARCEL = booleanPreferencesKey("enable_parcel")
+    private val KEY_ENABLE_COUPON = booleanPreferencesKey("enable_coupon")
     private val KEY_DARK_MODE = stringPreferencesKey("dark_mode")
     private val KEY_API_KEY = stringPreferencesKey("api_key")
     private val KEY_API_BASE_URL = stringPreferencesKey("api_base_url")
@@ -35,6 +36,7 @@ object AppPreferences {
         val confidenceThreshold: Float = 0.5f,
         val enableFoodCodes: Boolean = true,
         val enableParcelCodes: Boolean = true,
+        val enableCouponCodes: Boolean = false,
         val darkMode: String = "system",
         val apiKey: String = "",
         val apiBaseUrl: String = "https://api.openai.com/v1",
@@ -55,6 +57,7 @@ object AppPreferences {
                 confidenceThreshold = prefs[KEY_CONFIDENCE_THRESHOLD] ?: 0.5f,
                 enableFoodCodes = prefs[KEY_ENABLE_FOOD] ?: true,
                 enableParcelCodes = prefs[KEY_ENABLE_PARCEL] ?: true,
+                enableCouponCodes = prefs[KEY_ENABLE_COUPON] ?: false,
                 darkMode = prefs[KEY_DARK_MODE] ?: "system",
                 apiKey = prefs[KEY_API_KEY] ?: "",
                 apiBaseUrl = prefs[KEY_API_BASE_URL] ?: "https://api.openai.com/v1",
@@ -81,6 +84,10 @@ object AppPreferences {
 
     suspend fun setEnableParcel(context: Context, value: Boolean) {
         context.dataStore.edit { it[KEY_ENABLE_PARCEL] = value }
+    }
+
+    suspend fun setEnableCoupon(context: Context, value: Boolean) {
+        context.dataStore.edit { it[KEY_ENABLE_COUPON] = value }
     }
 
     suspend fun setDarkMode(context: Context, value: String) {
