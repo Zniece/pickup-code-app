@@ -80,7 +80,7 @@ Gradle 找不到 Android SDK。按上文「Android SDK 位置配置」创建 `lo
 
 ### 2. 国内网络下载依赖缓慢
 
-Gradle 依赖默认从 `google()` / `mavenCentral()` 下载。可配置阿里云镜像加速，方法是在用户目录 `~/.gradle/init.gradle`（全局，作用于所有项目，不影响本仓库）：
+Gradle 依赖默认从 `google()` / `mavenCentral()` 下载。可配置阿里云镜像加速，方法是在用户目录 `~/.gradle/init.gradle`（全局，作用于所有项目）：
 
 ```groovy
 settingsEvaluated { settings ->
