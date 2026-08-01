@@ -1,6 +1,8 @@
 package com.pickupcode.app
 
 import android.os.Build
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
@@ -10,6 +12,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,6 +28,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -38,8 +43,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.lifecycleScope
 import com.pickupcode.app.data.AppDatabase
@@ -260,6 +267,26 @@ fun MainScreen(
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var dedupCount by remember { mutableIntStateOf(0) }
+    var searchQuery by remember { mutableStateOf("") }
+    var typeFilter by remember { mutableStateOf("all") } // all / food / parcel / coupon
+
+    // 按搜索词 + 类型筛选
+    val filteredHistory = remember(activeHistory, searchQuery, typeFilter) {
+        activeHistory.filter { h ->
+            val typeOk = when (typeFilter) {
+                "food" -> h.type == "pickup_food"
+                "parcel" -> h.type == "pickup_parcel"
+                "coupon" -> h.type == "coupon"
+                else -> true
+            }
+            val q = searchQuery.trim()
+            val queryOk = if (q.isEmpty()) true else
+                h.code.contains(q, ignoreCase = true) ||
+                h.source.contains(q, ignoreCase = true) ||
+                h.pickupAddress.contains(q, ignoreCase = true)
+            typeOk && queryOk
+        }
+    }
 
     // 自动清理过期回收站记录
     LaunchedEffect(Unit) {
@@ -304,12 +331,25 @@ fun MainScreen(
             }
         }
     ) { padding ->
+        // 类玻璃背景：柔和渐变底色，让半透明卡片透出层次
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
+                            MaterialTheme.colorScheme.surface
+                        )
+                    )
+                )
+        ) {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(12.dp, 8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             // 通知权限提示（与下方无障碍卡统一内边距，保证大小一致）
             item { NotificationPermissionBanner(hasPermission = hasNotificationPermission, onRequestPermission = onRequestNotificationPermission) }
@@ -386,21 +426,41 @@ fun MainScreen(
                 }
             }
 
+            // 类型筛选
+            item {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    // 类型筛选 chip
+                    listOf("all" to "全部", "food" to "🥤取餐", "parcel" to "📦取件", "coupon" to "🎟️券码").forEach { (k, label) ->
+                        FilterChip(
+                            selected = typeFilter == k,
+                            onClick = { typeFilter = k },
+                            label = { Text(label) }
+                        )
+                    }
+                }
+            }
+
             // 历史记录标题
-            item { Text("历史记录", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
+            item { Text("历史记录", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 2.dp)) }
 
             // 历史列表 / 空状态
-            if (activeHistory.isEmpty()) {
+            if (filteredHistory.isEmpty()) {
                 item {
                     Box(
                         modifier = Modifier.fillMaxWidth().padding(32.dp),
                         contentAlignment = Alignment.Center
                     ) {
-                        Text("还没有记录\n打开外卖/快递App自动识别\n或点右下角手动输入", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                        Text(
+                            if (activeHistory.isEmpty()) "还没有记录\n打开外卖/快递App自动识别\n或点右下角手动输入"
+                            else "没有符合筛选条件的记录",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     }
                 }
             } else {
-                items(activeHistory, key = { it.id }) { item ->
+                items(filteredHistory, key = { it.id }) { item ->
                     CodeHistoryCard(
                         item = item,
                         onClick = { onItemClick(item.id) },
@@ -422,6 +482,7 @@ fun MainScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -432,10 +493,14 @@ fun CodeHistoryCard(
     onDelete: () -> Unit,
     onDone: (() -> Unit)? = null
 ) {
+    // 卡片：容器=边缘相近的莫兰迪浅灰蓝（简单统一，不加半透明避免边缘脱节）
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
     ) {
         Row(
             modifier = Modifier
@@ -447,7 +512,8 @@ fun CodeHistoryCard(
                 Text(
                     item.code,
                     style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onPrimaryContainer
                 )
                 Text(
                     "${item.source} · ${formatTime(item.timestamp)}",
