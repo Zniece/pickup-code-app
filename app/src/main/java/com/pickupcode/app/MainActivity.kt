@@ -80,7 +80,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         // 处理外部分享/拖放 Intent（首次启动时）
-        ShareReceiver.handle(this, intent, lifecycleScope)
+        ShareReceiver.handle(this, intent, App.appScope)
 
         hasNotificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -161,7 +161,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         // 处理外部分享/拖放 Intent（App已在运行中时）
-        ShareReceiver.handle(this, intent, lifecycleScope)
+        ShareReceiver.handle(this, intent, App.appScope)
     }
 
     override fun onResume() {
@@ -201,7 +201,8 @@ class MainActivity : ComponentActivity() {
             val db = AppDatabase.getInstance(this@MainActivity)
             val codeType = when (type) {
                 "pickup_food" -> CodeExtractor.CodeType.pickup_food
-                else -> CodeExtractor.CodeType.pickup_parcel
+                "pickup_parcel" -> CodeExtractor.CodeType.pickup_parcel
+                else -> CodeExtractor.CodeType.pickup_food // 手动录入只支持取餐/取件；默认取餐
             }
             db.codeHistoryDao().insert(
                 CodeHistory(

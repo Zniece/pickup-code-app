@@ -8,6 +8,8 @@ import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
@@ -21,26 +23,43 @@ object CouponDetector {
     private const val TAG = "CouponDetector"
 
     // 只认二维码：二维码有三定位角结构，普通数字/文本不会被误识别为二维码，彻底避免"不认数字"的误报
-    private val scanner: BarcodeScanner by lazy {
-        BarcodeScanning.getClient(
-            BarcodeScannerOptions.Builder()
-                .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
-                .build()
-        )
+    @Volatile
+    private var scanner: BarcodeScanner? = null
+
+    private fun getScanner(): BarcodeScanner =
+        scanner ?: synchronized(this) {
+            scanner ?: BarcodeScanning.getClient(
+                BarcodeScannerOptions.Builder()
+                    .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+                    .build()
+            ).also { scanner = it }
+        }
+
+    /** 释放 ML Kit 客户端（服务销毁时调用，避免 native 资源累积泄漏） */
+    fun close() {
+        synchronized(this) {
+            scanner?.close()
+            scanner = null
+        }
     }
 
     data class CouponResult(
         val rawValue: String?   // 解码内容（码值）
     )
 
+    // 串行化 BarcodeScanner.process：ML Kit 同一客户端不允许并发 process()，否则抛 "detector busy" 静默丢券码
+    private val mutex = Mutex()
+
     /** 检测并解码 bitmap 中的二维码/条码，返回解码结果；异常或未检测到返回空列表。 */
     suspend fun detect(bitmap: Bitmap): List<CouponResult> = withContext(Dispatchers.Default) {
         try {
-            val image = InputImage.fromBitmap(bitmap, 0)
-            val barcodes = scanner.process(image).await()
-            barcodes
-                .filter { !it.rawValue.isNullOrBlank() }
-                .map { CouponResult(rawValue = it.rawValue) }
+            mutex.withLock {
+                val image = InputImage.fromBitmap(bitmap, 0)
+                val barcodes = getScanner().process(image).await()
+                barcodes
+                    .filter { !it.rawValue.isNullOrBlank() }
+                    .map { CouponResult(rawValue = it.rawValue) }
+            }
         } catch (e: Exception) {
             Log.e(TAG, "条码检测失败: ${e.message}")
             emptyList()

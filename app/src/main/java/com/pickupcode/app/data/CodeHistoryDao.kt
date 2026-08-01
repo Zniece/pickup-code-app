@@ -16,11 +16,14 @@ interface CodeHistoryDao {
     @Query("SELECT * FROM code_history WHERE id = :id")
     fun getById(id: Long): Flow<CodeHistory?>
 
+    @Query("SELECT * FROM code_history WHERE id = :id")
+    suspend fun getByIdSuspend(id: Long): CodeHistory?
+
     @Query("SELECT * FROM code_history WHERE isActive = 1 ORDER BY timestamp DESC LIMIT 5")
     fun getRecentActive(): Flow<List<CodeHistory>>
 
-    /** 按 code+type 查最新一条（保存前去重用） */
-    @Query("SELECT * FROM code_history WHERE code = :code AND type = :type ORDER BY timestamp DESC LIMIT 1")
+    /** 按 code+type 查最新的活跃一条（保存前去重用；需 isActive=1，避免回收站数据误判"已存在"） */
+    @Query("SELECT * FROM code_history WHERE code = :code AND type = :type AND isActive = 1 ORDER BY timestamp DESC LIMIT 1")
     suspend fun findByCodeAndType(code: String, type: String): CodeHistory?
 
     /** 查同 code 不同类型的记录（重复值检测） */

@@ -37,7 +37,9 @@ object CodeNotificationManager {
         )
     }
 
-    private fun safeId(code: String): Int = code.hashCode() and 0x7fffffff
+    /** 稳定通知 id：基于 code+type 复合，减少短码 hashCode 碰撞，并校正非负 */
+    private fun safeId(type: CodeExtractor.CodeType, code: String): Int =
+        ("$type:$code".hashCode() and 0x7fffffff)
 
     private data class TypeStyle(val channelId: String, val iconLabel: String, val title: String)
 
@@ -69,6 +71,7 @@ object CodeNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val nid = safeId(type, code)
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("$iconLabel $title")
@@ -81,27 +84,27 @@ object CodeNotificationManager {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(0, "已取",
-                PendingIntent.getBroadcast(context, safeId(code) + 1,
+                PendingIntent.getBroadcast(context, (nid + 1) and 0x7fffffff,
                     Intent(context, DoneReceiver::class.java).apply {
                         putExtra("history_id", historyId ?: -1)
-                        putExtra("notification_id", safeId(code))
+                        putExtra("notification_id", nid)
                     },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "忽略",
-                PendingIntent.getBroadcast(context, safeId(code),
+                PendingIntent.getBroadcast(context, nid,
                     Intent(context, NotificationDismissReceiver::class.java).apply {
-                        putExtra("notification_id", safeId(code))
+                        putExtra("notification_id", nid)
                     },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             .build()
 
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        nm.notify(safeId(code), notification)
+        nm.notify(nid, notification)
     }
 
-    fun dismiss(context: Context, code: String) {
+    fun dismiss(context: Context, type: CodeExtractor.CodeType, code: String) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        nm.cancel(safeId(code))
+        nm.cancel(safeId(type, code))
     }
 
     fun dismissById(context: Context, id: Int) {
@@ -127,7 +130,7 @@ object CodeNotificationManager {
             putExtra("show_dedup", true)
         }
         val pendingIntent = PendingIntent.getActivity(
-            context, safeId(code), intent,
+            context, safeId(type, code), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -141,6 +144,7 @@ object CodeNotificationManager {
             .build()
 
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        nm.notify("dup_$code".hashCode() and 0x7fffffff, notification)
+        // 去重提示用独立 id（code+type 复合），避免与主通知 id 冲突
+        nm.notify(("dup_${type.name}_$code").hashCode() and 0x7fffffff, notification)
     }
 }

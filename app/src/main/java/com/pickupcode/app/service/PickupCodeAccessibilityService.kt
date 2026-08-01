@@ -89,6 +89,10 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         // 收敛协程与 Handler，避免服务卸载后空转/泄漏（H2/H3）
         mainHandler.removeCallbacksAndMessages(null)
         scope.cancel()
+        screenshotExecutor.shutdownNow()
+        // 释放 ML Kit 客户端（unbind 未必紧跟 destroy，提前释放避免 native 累积）
+        try { OCREngine.close() } catch (_: Exception) {}
+        try { CouponDetector.close() } catch (_: Exception) {}
         return super.onUnbind(intent)
     }
 
@@ -96,6 +100,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         mainHandler.removeCallbacksAndMessages(null)
         scope.cancel()
         screenshotExecutor.shutdownNow()
+        // 释放 ML Kit 客户端，避免 native 资源随服务重建累积泄漏
+        try { OCREngine.close() } catch (_: Exception) {}
+        try { CouponDetector.close() } catch (_: Exception) {}
         super.onDestroy()
     }
 

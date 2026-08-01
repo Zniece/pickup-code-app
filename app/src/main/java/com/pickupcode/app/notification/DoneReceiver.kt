@@ -22,8 +22,15 @@ class DoneReceiver : BroadcastReceiver() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         scope.launch {
             try {
+                val dao = AppDatabase.getInstance(context).codeHistoryDao()
                 if (historyId > 0) {
-                    AppDatabase.getInstance(context).codeHistoryDao().markDone(historyId)
+                    // 与 App 内「标记已取」一致：归档该 code+type 的全部活跃记录（对齐 markDoneByCodeAndType）
+                    val rec = dao.getByIdSuspend(historyId)
+                    if (rec != null) {
+                        dao.markDoneByCodeAndType(rec.code, rec.type)
+                    } else {
+                        dao.markDone(historyId)
+                    }
                 }
                 if (notificationId != -1) {
                     CodeNotificationManager.dismissById(context, notificationId)

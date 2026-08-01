@@ -196,22 +196,33 @@ object ShareReceiver {
         }
 
         for (result in allResults) {
-            // Check for existing same code+type (duplicate)
+            // 统一去重语义（与无障碍路径一致）：查到活跃记录 → 原地更新，不新增重复行
             val existing = db.codeHistoryDao().findByCodeAndType(result.code, result.type.name)
-            val isDuplicate = existing != null
+            val id: Long
+            if (existing != null) {
+                db.codeHistoryDao().update(existing.copy(
+                    timestamp = System.currentTimeMillis(),
+                    screenshotPath = screenshotPath.ifEmpty { existing.screenshotPath },
+                    source = result.source,
+                    rawTextSnippet = rawSnippet,
+                    pickupAddress = address.ifBlank { existing.pickupAddress },
+                    isActive = true,
+                    doneAt = 0
+                ))
+                id = existing.id
+            } else {
+                id = db.codeHistoryDao().insert(CodeHistory(
+                    code = result.code,
+                    type = result.type.name,
+                    source = result.source,
+                    rawTextSnippet = rawSnippet,
+                    pickupAddress = address,
+                    screenshotPath = screenshotPath
+                ))
+            }
 
-            val history = CodeHistory(
-                code = result.code,
-                type = result.type.name,
-                source = result.source,
-                rawTextSnippet = rawSnippet,
-                pickupAddress = address,
-                screenshotPath = screenshotPath
-            )
-            val id = db.codeHistoryDao().insert(history)
-
-            // Notify user about duplicate
-            if (isDuplicate && existing != null) {
+            // Notify user (同码同type已存在 -> 提示重复；否则正常通知)
+            if (existing != null) {
                 val dupCount = db.codeHistoryDao().countDuplicateGroups()
                 CodeNotificationManager.showDuplicate(
                     context, result.code, result.type, result.source, id, dupCount
@@ -219,7 +230,7 @@ object ShareReceiver {
             } else {
                 CodeNotificationManager.show(context, result.code, result.type, result.source, id)
             }
-            Log.d(TAG, "Recognized: ${result.code} (${result.type.name}) from ${result.source}${if (isDuplicate) " [DUPLICATE]" else ""}")
+            Log.d(TAG, "Recognized: ${result.code} (${result.type.name}) from ${result.source}${if (existing != null) " [DUPLICATE]" else ""}")
 
             // Async address geocoding verification
             if (address.isNotBlank() && settings.enableMapVerify) {
@@ -230,11 +241,14 @@ object ShareReceiver {
                             amapApiKey = settings.amapApiKey.ifBlank { null }
                         )
                         if (geoResult.verified) {
-                            db.codeHistoryDao().update(history.copy(
-                                geoVerified = true,
-                                geoConfidence = geoResult.confidence,
-                                geoFormattedAddress = geoResult.formattedAddress ?: ""
-                            ))
+                            // 基于最新记录更新 geo 字段（记录已由上面 update/insert 写入）
+                            db.codeHistoryDao().findByCodeAndType(result.code, result.type.name)?.let { rec ->
+                                db.codeHistoryDao().update(rec.copy(
+                                    geoVerified = true,
+                                    geoConfidence = geoResult.confidence,
+                                    geoFormattedAddress = geoResult.formattedAddress ?: ""
+                                ))
+                            }
                             Log.d(TAG, "Geo verify OK: $address -> ${geoResult.formattedAddress} (${geoResult.confidence})")
                         } else {
                             Log.d(TAG, "Geo verify failed for: $address")
