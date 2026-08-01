@@ -68,6 +68,32 @@
 | AI | 可选接入任意 OpenAI 兼容 API （默认使用 GPT-4o-mini，支持修改 API 地址与密钥） |
 | 自学习 | 本地聚类分析 + 自动正则生成 |
 
+## 项目结构
+
+```
+app/src/main/java/com/pickupcode/app/
+├── App.kt                 # Application：全局 scope、通知频道
+├── MainActivity.kt        # 主页/历史列表/回收站/手动录入 + 导航
+├── data/                  # 数据层：Room 实体 + DAO(去重/回收站/归档)
+│   ├── CodeHistory.kt
+│   └── CodeHistoryDao.kt
+├── extractor/             # 识别核心
+│   ├── CodeExtractor.kt   #   取件/取餐码 正则+评分+地址S0~S10管线
+│   ├── AIExtractor.kt     #   OpenAI 兼容 AI 提取
+│   └── CouponDetector.kt  #   券码(二维码)检测+解码
+├── ocr/OCREngine.kt       # ML Kit 文本识别
+├── learner/PatternLearner.kt  # 自学习：自动生成正则/统计
+├── geocoder/GeocoderVerifier.kt   # 地址地理编码验证
+├── kuaidi100/Kuaidi100Verifier.kt # 快递100 运单反查
+├── notification/          # 取餐/取件/券码通知 + 已取/忽略广播
+├── preferences/AppPreferences.kt  # DataStore 设置
+├── service/               # 无障碍服务(截屏+识别)、快捷磁贴
+├── share/ShareReceiver.kt # 外部分享/拖放
+└── ui/                    # Compose UI：theme/components/screens
+```
+
+**识别流程**：`截图/分享 → OCR(文字) + 券码检测(二维码) + 正则/AI(取餐/取件码) → 合并去重(券码与食/件码互斥) → 存库 + 通知 → 地址验证/快递100反查`
+
 ## 取件码格式覆盖
 
 | 格式 | 示例 |
