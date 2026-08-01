@@ -77,18 +77,24 @@ object Kuaidi100Verifier {
 
     /**
      * Attempt to auto-detect courier code from tracking number prefix.
-     * Common prefixes used by kuaidi100.
+     * 品牌识别统一委托给 CodeExtractor（单一来源），此处仅做中文品牌 → 快递100 com 码映射。
+     * 快递100 com 码参考其官方对照表。
      */
     fun guessCourierCode(trackingNum: String): String? {
-        return when {
-            trackingNum.startsWith("JT") || trackingNum.startsWith("jt") -> "jitu"
-            trackingNum.startsWith("SF") -> "shunfeng"
-            trackingNum.length == 15 && trackingNum.all { it.isDigit() } -> "zhongtong"
-            trackingNum.startsWith("YT") -> "yuantong"
-            trackingNum.startsWith("77") || trackingNum.startsWith("77") -> "shentong"
-            trackingNum.length == 13 && trackingNum.all { it.isDigit() } -> "yunda"
-            trackingNum.length == 13 -> "ems"
-            else -> null
-        }
+        val brand = com.pickupcode.app.extractor.CodeExtractor.guessOrderBrand(trackingNum) ?: return null
+        return BRAND_TO_KUAIDI100[brand]
     }
+
+    private val BRAND_TO_KUAIDI100 = mapOf(
+        "极兔" to "jitu",
+        "京东物流" to "jd",
+        "顺丰" to "shunfeng",
+        "圆通" to "yuantong",
+        "韵达" to "yunda",
+        "中通" to "zhongtong",
+        "申通" to "shentong",
+        "EMS" to "ems",
+        "邮政" to "youzheng",
+        "德邦" to "deppon"
+    )
 }

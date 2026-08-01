@@ -33,11 +33,11 @@ interface CodeHistoryDao {
     @Update
     suspend fun update(history: CodeHistory)
 
-    /** 标记已取：isActive=0 + doneAt=now */
+    /** 标记已取（移入回收站）：isActive=0 + doneAt=now。注：名含 Done 但语义是“归档/移入回收站”，非物理删除。 */
     @Query("UPDATE code_history SET isActive = 0, doneAt = :doneAt WHERE id = :id")
     suspend fun markDone(id: Long, doneAt: Long = System.currentTimeMillis())
 
-    /** 批量标记：同 code+type 的所有活跃记录标记为已取 */
+    /** 批量归档：同 code+type 的所有活跃记录标记为已取（一次取件对应多份同码记录全部归档）。 */
     @Query("UPDATE code_history SET isActive = 0, doneAt = :doneAt WHERE code = :code AND type = :type AND isActive = 1")
     suspend fun markDoneByCodeAndType(code: String, type: String, doneAt: Long = System.currentTimeMillis())
 
@@ -52,6 +52,10 @@ interface CodeHistoryDao {
     /** 手动删除回收站记录 */
     @Query("DELETE FROM code_history WHERE id = :id")
     suspend fun deleteById(id: Long)
+
+    /** 批量删除多条记录（一次性事务，避免逐条删） */
+    @Query("DELETE FROM code_history WHERE id IN (:ids)")
+    suspend fun deleteByIds(ids: List<Long>)
 
     @Query("DELETE FROM code_history WHERE timestamp < :before")
     suspend fun deleteOlderThan(before: Long)
@@ -84,7 +88,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "pickup_code_db"
                 )
-                    .fallbackToDestructiveMigration()
+                    .fallbackToDestructiveMigration() // 刻意选择：个人工具App历史版本多、无exportSchema，手写迁移风险更高；升级造成的历史数据清空由回收站/去重机制部分缓解。若未来需要保留数据，须先 exportSchema 并补 addMigrations。
                     .build()
                     .also { INSTANCE = it }
             }

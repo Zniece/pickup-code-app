@@ -21,11 +21,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.RestoreFromTrash
@@ -45,9 +47,11 @@ import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.preferences.AppPreferences
 import com.pickupcode.app.share.ShareReceiver
+import com.pickupcode.app.service.PickupCodeAccessibilityService
 import com.pickupcode.app.ui.components.ManualCodeDialog
 import com.pickupcode.app.ui.components.NotificationPermissionBanner
 import com.pickupcode.app.ui.screens.CodeDetailScreen
+import com.pickupcode.app.ui.screens.DedupScreen
 import com.pickupcode.app.ui.screens.SettingsScreen
 import com.pickupcode.app.ui.screens.StatsScreen
 import com.pickupcode.app.ui.theme.PickupCodeTheme
@@ -65,7 +69,7 @@ class MainActivity : ComponentActivity() {
     private var selectedCodeId by mutableStateOf(-1L)
     private var showManualDialog by mutableStateOf(false)
 
-    enum class Screen { Home, Settings, Detail, Trash, Stats }
+    enum class Screen { Home, Settings, Detail, Trash, Stats, Dedup }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -98,6 +102,7 @@ class MainActivity : ComponentActivity() {
                     Screen.Home -> MainScreen(
                         hasNotificationPermission = hasNotificationPermission,
                         isAccessibilityEnabled = isAccessibilityEnabled,
+                        hideAccessibilityCard = settings.hideAccessibilityCard,
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 notificationPermissionLauncher.launch(
@@ -106,6 +111,11 @@ class MainActivity : ComponentActivity() {
                             }
                         },
                         onEnableAccessibility = { openAccessibilitySettings() },
+                        onHideAccessibilityCard = {
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                AppPreferences.setHideAccessibilityCard(this@MainActivity, true)
+                            }
+                        },
                         onSettingsClick = { currentScreen = Screen.Settings },
                         onItemClick = { id ->
                             selectedCodeId = id
@@ -113,7 +123,8 @@ class MainActivity : ComponentActivity() {
                         },
                         onFabClick = { showManualDialog = true },
                         onTrashClick = { currentScreen = Screen.Trash },
-                        onStatsClick = { currentScreen = Screen.Stats }
+                        onStatsClick = { currentScreen = Screen.Stats },
+                        onDedupClick = { currentScreen = Screen.Dedup }
                     )
                     Screen.Settings -> SettingsScreen(
                         onBack = { currentScreen = Screen.Home },
@@ -127,6 +138,9 @@ class MainActivity : ComponentActivity() {
                         onBack = { currentScreen = Screen.Home }
                     )
                     Screen.Stats -> StatsScreen(
+                        onBack = { currentScreen = Screen.Home }
+                    )
+                    Screen.Dedup -> DedupScreen(
                         onBack = { currentScreen = Screen.Home }
                     )
                 }
@@ -165,7 +179,7 @@ class MainActivity : ComponentActivity() {
                 item = code,
                 onBack = onBack,
                 onUpdated = { updated ->
-                    lifecycleScope.launch {
+                    lifecycleScope.launch(Dispatchers.IO) {
                         db.codeHistoryDao().update(updated)
                     }
                 },
@@ -183,7 +197,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun saveManualCode(code: String, type: String, source: String) {
-        lifecycleScope.launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             val db = AppDatabase.getInstance(this@MainActivity)
             val codeType = when (type) {
                 "pickup_food" -> CodeExtractor.CodeType.pickup_food
@@ -207,7 +221,9 @@ class MainActivity : ComponentActivity() {
             contentResolver,
             Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
         ) ?: return false
-        return enabledServices.contains(packageName)
+        // split + 精确比对包名/服务类名，避免 contains 模糊匹配误判
+        val target = "$packageName/${PickupCodeAccessibilityService::class.java.name}"
+        return enabledServices.split(':').any { it.trim() == target }
     }
 
     private fun openAccessibilitySettings() {
@@ -225,13 +241,16 @@ class MainActivity : ComponentActivity() {
 fun MainScreen(
     hasNotificationPermission: Boolean,
     isAccessibilityEnabled: Boolean,
+    hideAccessibilityCard: Boolean,
     onRequestNotificationPermission: () -> Unit,
     onEnableAccessibility: () -> Unit,
+    onHideAccessibilityCard: () -> Unit,
     onSettingsClick: () -> Unit,
     onItemClick: (Long) -> Unit,
     onFabClick: () -> Unit,
     onTrashClick: () -> Unit,
-    onStatsClick: () -> Unit
+    onStatsClick: () -> Unit,
+    onDedupClick: () -> Unit
 ) {
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
@@ -284,185 +303,121 @@ fun MainScreen(
             }
         }
     ) { padding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .padding(padding),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // 通知权限提示
-            NotificationPermissionBanner(
-                hasPermission = hasNotificationPermission,
-                onRequestPermission = onRequestNotificationPermission
-            )
+            // 通知权限提示（与下方无障碍卡统一内边距，保证大小一致）
+            item { NotificationPermissionBanner(hasPermission = hasNotificationPermission, onRequestPermission = onRequestNotificationPermission) }
 
-            // 无障碍服务引导
-            if (!isAccessibilityEnabled) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                    )
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(
-                            "🔧 需要开启无障碍服务",
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "开启后点快捷设置磁贴即可自动识别屏幕上的取餐码/取件码",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        androidx.compose.material3.Button(onClick = onEnableAccessibility) {
-                            Text("去开启")
+            // 无障碍服务引导 / 使用提示（可隐藏）
+            if (!hideAccessibilityCard) {
+                if (!isAccessibilityEnabled) {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("🔧 需要开启无障碍服务", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                    IconButton(onClick = onHideAccessibilityCard, modifier = Modifier.size(28.dp)) {
+                                        Icon(Icons.Default.Close, contentDescription = "隐藏", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Spacer(Modifier.height(4.dp))
+                                Text("开启后点快捷设置磁贴即可自动识别屏幕上的取餐码/取件码", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(8.dp))
+                                Button(onClick = onEnableAccessibility) { Text("去开启") }
+                            }
                         }
                     }
-                }
-            } else {
-                // 已开启——使用提示
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
-                    )
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(
-                            "✅ 无障碍服务已开启",
-                            style = MaterialTheme.typography.titleSmall
-                        )
-                        Text(
-                            "打开控制面板 → 点✏️编辑 → 找到「一键闪记」→ 拖到面板",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "固定后点击磁贴，再在3秒内退出控制面板即可自动识别",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
+                } else {
+                    item {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
+                        ) {
+                            Column(Modifier.padding(16.dp)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text("✅ 无障碍服务已开启", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                                    IconButton(onClick = onHideAccessibilityCard, modifier = Modifier.size(28.dp)) {
+                                        Icon(Icons.Default.Close, contentDescription = "隐藏", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                                Text("打开控制面板 → 点✏️编辑 → 找到「一键闪记」→ 拖到面板", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(4.dp))
+                                Text("固定后点击磁贴，再在3秒内退出控制面板即可自动识别", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
+                            }
+                        }
                     }
                 }
             }
 
             // 回收站提示
             if (trashHistory.isNotEmpty()) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clickable(onClick = onTrashClick),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onTrashClick),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
-                        Text(
-                            "🗑️ 回收站有 ${trashHistory.size} 条记录，24小时后自动删除",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("🗑️ 回收站有 ${trashHistory.size} 条记录，24小时后自动删除", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
 
             // 去重提示
             if (dedupCount > 0) {
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 4.dp)
-                        .clickable(onClick = onStatsClick),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(12.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().clickable(onClick = onDedupClick),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
                     ) {
-                        Text(
-                            "🔄 发现 ${dedupCount} 组重复记录，点击查看 →",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer
-                        )
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("🔄 发现 ${dedupCount} 组重复记录，点击查看 →", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            // 历史记录标题
+            item { Text("历史记录", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp)) }
 
-            // 历史记录
-            Text(
-                "历史记录",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(horizontal = 16.dp)
-            )
-
+            // 历史列表 / 空状态
             if (activeHistory.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "还没有记录\n打开外卖/快递App自动识别\n或点右下角手动输入",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
+                item {
+                    Box(
+                        modifier = Modifier.fillMaxWidth().padding(32.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("还没有记录\n打开外卖/快递App自动识别\n或点右下角手动输入", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
+                    }
                 }
             } else {
-                LazyColumn(
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(activeHistory, key = { it.id }) { item ->
-                        CodeHistoryCard(
-                            item = item,
-                            onClick = { onItemClick(item.id) },
-                            onDelete = {
-                                scope.launch(Dispatchers.IO) {
-                                    // Batch delete all duplicates
-                                    db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
-                                    val snackbarResult = snackbarHostState.showSnackbar(
-                                        message = "已移至回收站，24小时后自动删除",
-                                        actionLabel = "撤销",
-                                        duration = SnackbarDuration.Short
-                                    )
-                                    if (snackbarResult == SnackbarResult.ActionPerformed) {
-                                        db.codeHistoryDao().restore(item.id)
-                                    }
-                                }
-                            },
-                            onDone = {
-                                scope.launch(Dispatchers.IO) {
-                                    // Batch delete all duplicates
-                                    db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
-                                    val snackbarResult = snackbarHostState.showSnackbar(
-                                        message = "已移至回收站，24小时后自动删除",
-                                        actionLabel = "撤销",
-                                        duration = SnackbarDuration.Short
-                                    )
-                                    if (snackbarResult == SnackbarResult.ActionPerformed) {
-                                        db.codeHistoryDao().restore(item.id)
-                                    }
-                                }
+                items(activeHistory, key = { it.id }) { item ->
+                    CodeHistoryCard(
+                        item = item,
+                        onClick = { onItemClick(item.id) },
+                        onDelete = {
+                            scope.launch(Dispatchers.IO) {
+                                db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
+                                val snackbarResult = snackbarHostState.showSnackbar(message = "已移至回收站，24小时后自动删除", actionLabel = "撤销", duration = SnackbarDuration.Short)
+                                if (snackbarResult == SnackbarResult.ActionPerformed) { db.codeHistoryDao().restore(item.id) }
                             }
-                        )
-                    }
+                        },
+                        onDone = {
+                            scope.launch(Dispatchers.IO) {
+                                db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
+                                val snackbarResult = snackbarHostState.showSnackbar(message = "已移至回收站，24小时后自动删除", actionLabel = "撤销", duration = SnackbarDuration.Short)
+                                if (snackbarResult == SnackbarResult.ActionPerformed) { db.codeHistoryDao().restore(item.id) }
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -503,7 +458,7 @@ fun CodeHistoryCard(
                         "📍 ${item.pickupAddress}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
+                        maxLines = 2
                     )
                 }
                 Text(

@@ -7,6 +7,7 @@ import android.net.Uri
 import android.util.Log
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
+import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.notification.CodeNotificationManager
@@ -15,6 +16,7 @@ import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -80,7 +82,7 @@ object ShareReceiver {
         if (lines.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
         val address = CodeExtractor.extractAddress(lines, allText)
-        extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }.take(200)}", "", address)
+        extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address)
     }
 
     private suspend fun processImage(context: Context, uri: Uri, sourceLabel: String) {
@@ -122,7 +124,7 @@ object ShareReceiver {
         if (lines.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
         val address = CodeExtractor.extractAddress(lines, allText)
-        val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }.take(200)}"
+        val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
         extractAndNotify(context, lines, snippet, screenshotPath, address)
     }
 
@@ -133,15 +135,44 @@ object ShareReceiver {
         screenshotPath: String = "",
         address: String = ""
     ) {
-        val results = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context) }
-        if (results.isEmpty()) {
-            Log.d(TAG, "No pickup code found")
-            return
-        }
+        val allText = lines.joinToString(" ") { it.text }
         val db = AppDatabase.getInstance(context)
         val settings = withContext(Dispatchers.IO) { AppPreferences.observe(context).first() }
 
-        for (result in results) {
+        // 正则主路径先行（问题3：分享路径接入 AI，但不阻塞）
+        val regexResults = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context) }
+        val allResults = mutableListOf<CodeExtractor.ExtractedCode>()
+        for (re in regexResults) {
+            if (re.confidence >= settings.confidenceThreshold && !isTypeDisabled(re.type, settings)) {
+                allResults.add(re)
+            }
+        }
+
+        // AI 异步并行合并（同码同 type 去重；格式已由 isValidPickupCode 把关）
+        if (settings.enableAI && settings.apiKey.isNotBlank()) {
+            val aiDeferred = GlobalScope.async(Dispatchers.IO) {
+                AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
+            }
+            try {
+                val aiRes = aiDeferred.await()
+                if (aiRes.error != null) Log.w(TAG, "AI 识别失败: ${aiRes.error}")
+                for (ai in aiRes.results) {
+                    if (isTypeDisabled(ai.type, settings)) continue
+                    if (allResults.any { it.code == ai.code && it.type == ai.type }) continue // 同码同type去重
+                    // 构造与正则同结构的 ExtractedCode，source 用 AI 识别结果
+                    allResults.add(CodeExtractor.ExtractedCode(ai.code, ai.type, ai.source, 1.0f))
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "AI 结果合并异常: ${e.message}")
+            }
+        }
+
+        if (allResults.isEmpty()) {
+            Log.d(TAG, "No pickup code found")
+            return
+        }
+
+        for (result in allResults) {
             // Check for existing same code+type (duplicate)
             val existing = db.codeHistoryDao().findByCodeAndType(result.code, result.type.name)
             val isDuplicate = existing != null
@@ -181,7 +212,7 @@ object ShareReceiver {
                                 geoConfidence = geoResult.confidence,
                                 geoFormattedAddress = geoResult.formattedAddress ?: ""
                             ))
-                            Log.d(TAG, "Geo verify OK: $address → ${geoResult.formattedAddress} (${geoResult.confidence})")
+                            Log.d(TAG, "Geo verify OK: $address -> ${geoResult.formattedAddress} (${geoResult.confidence})")
                         } else {
                             Log.d(TAG, "Geo verify failed for: $address")
                         }
@@ -191,5 +222,11 @@ object ShareReceiver {
                 }
             }
         }
+    }
+
+    /** 该类型是否被用户关闭（抽取共用，避免在多个分支重复 switch） */
+    private fun isTypeDisabled(type: CodeExtractor.CodeType, settings: AppPreferences.Settings): Boolean = when (type) {
+        CodeExtractor.CodeType.pickup_food -> !settings.enableFoodCodes
+        CodeExtractor.CodeType.pickup_parcel -> !settings.enableParcelCodes
     }
 }

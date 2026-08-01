@@ -1,5 +1,6 @@
 package com.pickupcode.app.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -32,12 +33,18 @@ fun StatsScreen(onBack: () -> Unit) {
     var loading by remember { mutableStateOf(true) }
 
     LaunchedEffect(Unit) {
-        stats = withContext(Dispatchers.IO) { PatternLearner.getStats(context) }
-        suggestions = withContext(Dispatchers.IO) { PatternLearner.getSuggestions(context) }
-        learnedRules = withContext(Dispatchers.IO) { PatternLearner.getLearnedPatterns(context) }
-        // Trigger auto-apply on view
-        withContext(Dispatchers.IO) { PatternLearner.autoApply(context) }
-        loading = false
+        try {
+            stats = withContext(Dispatchers.IO) { PatternLearner.getStats(context) }
+            suggestions = withContext(Dispatchers.IO) { PatternLearner.getSuggestions(context) }
+            learnedRules = withContext(Dispatchers.IO) { PatternLearner.getLearnedPatterns(context) }
+            // Trigger auto-apply on view
+            withContext(Dispatchers.IO) { PatternLearner.autoApply(context) }
+        } catch (e: Exception) {
+            stats = null
+            Log.e("StatsScreen", "加载统计失败", e)
+        } finally {
+            loading = false
+        }
     }
 
     Scaffold(
@@ -266,12 +273,19 @@ private fun patternLabel(id: String): String = when (id) {
 
 @Composable
 private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>) {
-    if (rules.isEmpty()) return
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp)) {
             Text("🧠 已学习规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("系统自动从未识别样本中学习并应用的新正则", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
+            if (rules.isEmpty()) {
+                Text(
+                    "暂无已学习规则。继续使用 App，系统会从未识别的文本中自动学习并应用新正则。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                return@Column
+            }
             rules.forEach { rule ->
                 Row(
                     Modifier.fillMaxWidth().padding(vertical = 4.dp),

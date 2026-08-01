@@ -28,7 +28,9 @@ object OCREngine {
 
     // Unicode dash variants that OCR often produces instead of ASCII "-" (U+002D).
     // Normalizing these ensures CodeExtractor's regex patterns match correctly.
-    private val UNICODE_DASHES = Regex("[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]")
+    // U+30FC is the Japanese long-vowel mark (ー), which the Chinese OCR model
+    // frequently outputs for a hyphen in courier codes like D-06003.
+    private val UNICODE_DASHES = Regex("[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D\u30FC]")
 
     suspend fun recognize(bitmap: Bitmap): List<TextLine> {
         val image = InputImage.fromBitmap(bitmap, 0)

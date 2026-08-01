@@ -11,6 +11,10 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
 
 object AppPreferences {
 
+    // 安全说明：API Key（AI / 高德 / 快递100）以明文存于 DataStore。
+    // 对本地单机工具 App 可接受；若在意反编译泄露，可迁移到 EncryptedSharedPreferences
+    // （升级时需把旧明文值读入并写入加密存储，属架构级改动，暂缓）。
+
     private val KEY_CONFIDENCE_THRESHOLD = floatPreferencesKey("confidence_threshold")
     private val KEY_ENABLE_FOOD = booleanPreferencesKey("enable_food")
     private val KEY_ENABLE_PARCEL = booleanPreferencesKey("enable_parcel")
@@ -25,6 +29,7 @@ object AppPreferences {
     private val KEY_AMAP_API_KEY = stringPreferencesKey("amap_api_key")
     private val KEY_ENABLE_KUAIDI100 = booleanPreferencesKey("enable_kuaidi100")
     private val KEY_KUAIDI100_KEY = stringPreferencesKey("kuaidi100_key")
+    private val KEY_HIDE_ACCESSIBILITY_CARD = booleanPreferencesKey("hide_accessibility_card")
 
     data class Settings(
         val confidenceThreshold: Float = 0.5f,
@@ -40,7 +45,8 @@ object AppPreferences {
         val enableMapVerify: Boolean = false,
         val amapApiKey: String = "",
         val enableKuaidi100: Boolean = false,
-        val kuaidi100Key: String = ""
+        val kuaidi100Key: String = "",
+        val hideAccessibilityCard: Boolean = false
     )
 
     fun observe(context: Context): Flow<Settings> {
@@ -59,7 +65,8 @@ object AppPreferences {
                 enableMapVerify = prefs[KEY_ENABLE_MAP_VERIFY] ?: false,
                 amapApiKey = prefs[KEY_AMAP_API_KEY] ?: "",
                 enableKuaidi100 = prefs[KEY_ENABLE_KUAIDI100] ?: false,
-                kuaidi100Key = prefs[KEY_KUAIDI100_KEY] ?: ""
+                kuaidi100Key = prefs[KEY_KUAIDI100_KEY] ?: "",
+                hideAccessibilityCard = prefs[KEY_HIDE_ACCESSIBILITY_CARD] ?: false
             )
         }
     }
@@ -118,5 +125,9 @@ object AppPreferences {
 
     suspend fun setKuaidi100Key(context: Context, value: String) {
         context.dataStore.edit { it[KEY_KUAIDI100_KEY] = value }
+    }
+
+    suspend fun setHideAccessibilityCard(context: Context, value: Boolean) {
+        context.dataStore.edit { it[KEY_HIDE_ACCESSIBILITY_CARD] = value }
     }
 }

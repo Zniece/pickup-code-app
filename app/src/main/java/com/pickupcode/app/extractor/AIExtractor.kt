@@ -19,6 +19,12 @@ object AIExtractor {
         val source: String
     )
 
+    /** 提取结果：results 为识别到的码；error 非空表示本次调用失败（网络/Key/解析），用于上层反馈 */
+    data class AIExtractResult(
+        val results: List<AIResult> = emptyList(),
+        val error: String? = null
+    )
+
     private val SYSTEM_PROMPT = """
 你是一个取餐码/取件码识别助手。用户会发来一段手机屏幕上的文字，你需要从中提取所有取餐码和取件码。
 
@@ -38,7 +44,7 @@ object AIExtractor {
         apiKey: String,
         apiBaseUrl: String = "https://api.openai.com/v1",
         model: String = "gpt-4o-mini"
-    ): List<AIResult> = withContext(Dispatchers.IO) {
+    ): AIExtractResult = withContext(Dispatchers.IO) {
         try {
             val url = URL("${apiBaseUrl.trimEnd('/')}/chat/completions")
             val conn = url.openConnection() as HttpURLConnection
@@ -52,7 +58,7 @@ object AIExtractor {
             val body = JSONObject().apply {
                 put("model", model)
                 put("temperature", 0.0)
-                put("max_tokens", 200)
+                put("max_tokens", 500)
                 put("messages", JSONArray().apply {
                     put(JSONObject().apply {
                         put("role", "system")
@@ -67,7 +73,10 @@ object AIExtractor {
 
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
 
-            if (conn.responseCode != 200) return@withContext emptyList()
+            if (conn.responseCode != 200) {
+                val errBody = try { conn.errorStream?.bufferedReader()?.readText() } catch (_: Exception) { null }
+                return@withContext AIExtractResult(error = "HTTP ${conn.responseCode}: ${errBody?.take(120) ?: ""}".trim())
+            }
 
             val response = conn.inputStream.bufferedReader().readText()
             conn.disconnect()
@@ -86,8 +95,10 @@ object AIExtractor {
             val results = mutableListOf<AIResult>()
             for (i in 0 until arr.length()) {
                 val r = arr.getJSONObject(i)
-                val code = r.optString("code", "")
+                val code = r.optString("code", "").trim()
                 if (code.isBlank()) continue
+                // 格式白名单校验：AI 结果不比正则可靠，只接受合法取餐/取件码格式（复用 CodeExtractor 规则）
+                if (!CodeExtractor.isValidPickupCode(code)) continue
                 val typeStr = r.optString("type", "pickup_parcel")
                 results.add(AIResult(
                     code = code,
@@ -96,10 +107,10 @@ object AIExtractor {
                     source = r.optString("source", "unknown").ifBlank { "unknown" }
                 ))
             }
-            results
+            AIExtractResult(results = results)
         } catch (e: Exception) {
             Log.e("AIExtractor", "AI识别异常", e)
-            emptyList()
+            AIExtractResult(error = e.message ?: "AI调用失败")
         }
     }
 }

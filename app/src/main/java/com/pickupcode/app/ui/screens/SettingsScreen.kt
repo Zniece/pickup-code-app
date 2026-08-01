@@ -1,5 +1,6 @@
 package com.pickupcode.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material.icons.Icons
@@ -9,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -17,6 +19,9 @@ import com.pickupcode.app.learner.PatternLearner
 import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
@@ -31,7 +36,14 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
     var apiModel by remember { mutableStateOf(s.apiModel) }
     var amapApiKey by remember { mutableStateOf(s.amapApiKey) }
     var kuaidi100Key by remember { mutableStateOf(s.kuaidi100Key) }
-    var keyVisible by remember { mutableStateOf(false) }
+
+    // DataStore 异步加载真实值后回填一次，避免已配置的 Key 在重启后显示为空（M1）
+    LaunchedEffect(Unit) {
+        AppPreferences.observe(ctx).first().let {
+            apiUrl = it.apiBaseUrl; apiKey = it.apiKey; apiModel = it.apiModel
+            amapApiKey = it.amapApiKey; kuaidi100Key = it.kuaidi100Key
+        }
+    }
 
     Scaffold(topBar = { TopAppBar(title = { Text("设置") }, navigationIcon = {
         IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } },
@@ -42,9 +54,12 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { Text("识别灵敏度", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { Text("阈值越低越宽松，越高越严格", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Row(verticalAlignment = Alignment.CenterVertically) {
-                Slider(value = s.confidenceThreshold, onValueChange = { scope.launch(Dispatchers.IO) { AppPreferences.setConfidenceThreshold(ctx, it) } },
+                var confDraft by remember { mutableStateOf(s.confidenceThreshold) }
+                Slider(value = confDraft,
+                    onValueChange = { confDraft = it },
+                    onValueChangeFinished = { scope.launch(Dispatchers.IO) { AppPreferences.setConfidenceThreshold(ctx, confDraft) } },
                     valueRange = 0.1f..0.8f, modifier = Modifier.weight(1f))
-                Text("${(s.confidenceThreshold * 100).roundToInt()}%", modifier = Modifier.padding(start = 8.dp)) } }
+                Text("${(confDraft * 100).roundToInt()}%", modifier = Modifier.padding(start = 8.dp)) } }
             item { HorizontalDivider() }
 
             item { Text("识别类型", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -58,12 +73,20 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { Switch("📤 分享识别", sub = "文本选择菜单/拖放直达时自动识别取餐取件码", checked = s.enableShareDetection) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableShareDetection(ctx, it) } } }
             item { HorizontalDivider() }
 
+            item { Text("🔧 无障碍服务提示", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { Text("主页的无障碍服务引导卡片，可以随时隐藏", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { OutlinedButton(
+                onClick = { scope.launch(Dispatchers.IO) { AppPreferences.setHideAccessibilityCard(ctx, false) } },
+                enabled = s.hideAccessibilityCard,
+                modifier = Modifier.fillMaxWidth()) { Text("在主页重新显示无障碍提示") } }
+            item { HorizontalDivider() }
+
             item { Text("🗺️ 地图验证", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { Text("提取地址后自动查询地图验证真实性，辅助自学习评级", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Switch("启用地图验证", sub = if (s.enableMapVerify) "已启用" else "已关闭（隐私优先）", checked = s.enableMapVerify) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableMapVerify(ctx, it) } } }
             if (s.enableMapVerify) {
                 item { Text("Android 地理编码器优先使用，无需配置。如需更高精度可填高德 API Key：", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                item { OutlinedTextField(amapApiKey, { amapApiKey = it; scope.launch(Dispatchers.IO) { AppPreferences.setAmapApiKey(ctx, it) } }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("高德 API Key（可选）") }) }
+                item { DebouncedKeyField(value = amapApiKey, label = "高德 API Key（可选）", onCommit = { scope.launch(Dispatchers.IO) { AppPreferences.setAmapApiKey(ctx, it) } }, onChange = { amapApiKey = it }) }
                 item { AmapHelpSection() }
             }
             item { HorizontalDivider() }
@@ -72,7 +95,7 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { Text("通过快递单号查询取件码和地址，验证OCR结果", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Switch("启用快递100验证", sub = if (s.enableKuaidi100) "已启用" else "已关闭", checked = s.enableKuaidi100) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableKuaidi100(ctx, it) } } }
             if (s.enableKuaidi100) {
-                item { OutlinedTextField(kuaidi100Key, { kuaidi100Key = it; scope.launch(Dispatchers.IO) { AppPreferences.setKuaidi100Key(ctx, it) } }, Modifier.fillMaxWidth(), singleLine = true, label = { Text("快递100 API Key") }) }
+                item { DebouncedKeyField(value = kuaidi100Key, label = "快递100 API Key", onCommit = { scope.launch(Dispatchers.IO) { AppPreferences.setKuaidi100Key(ctx, it) } }, onChange = { kuaidi100Key = it }) }
                 item { Kuaidi100HelpSection() }
             }
             item { HorizontalDivider() }
@@ -87,14 +110,9 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
                 checked = s.enableAI) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableAI(ctx, it) } } }
 
             if (s.enableAI) {
-                item { OutlinedTextField(apiUrl, { apiUrl = it; scope.launch(Dispatchers.IO) { AppPreferences.setApiBaseUrl(ctx, it) } },
-                    Modifier.fillMaxWidth(), singleLine = true, label = { Text("API 地址") }) }
-                item { OutlinedTextField(apiKey, { apiKey = it; scope.launch(Dispatchers.IO) { AppPreferences.setApiKey(ctx, it) } },
-                    Modifier.fillMaxWidth(), singleLine = true, label = { Text("API Key") },
-                    visualTransformation = if (keyVisible) VisualTransformation.None else PasswordVisualTransformation(),
-                    trailingIcon = { TextButton(onClick = { keyVisible = !keyVisible }) { Text(if (keyVisible) "隐藏" else "显示", style = MaterialTheme.typography.labelSmall) } }) }
-                item { OutlinedTextField(apiModel, { apiModel = it; scope.launch(Dispatchers.IO) { AppPreferences.setApiModel(ctx, it) } },
-                    Modifier.fillMaxWidth(), singleLine = true, label = { Text("模型名称") }) }
+                item { DebouncedKeyField(value = apiUrl, label = "API 地址", onCommit = { scope.launch(Dispatchers.IO) { AppPreferences.setApiBaseUrl(ctx, it) } }, onChange = { apiUrl = it }) }
+                item { DebouncedKeyField(value = apiKey, label = "API Key", isPassword = true, onCommit = { scope.launch(Dispatchers.IO) { AppPreferences.setApiKey(ctx, it) } }, onChange = { apiKey = it }) }
+                item { DebouncedKeyField(value = apiModel, label = "模型名称", onCommit = { scope.launch(Dispatchers.IO) { AppPreferences.setApiModel(ctx, it) } }, onChange = { apiModel = it }) }
             }
             item { HorizontalDivider() }
 
@@ -102,7 +120,13 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { Column { Text("一键闪记 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
                 Text("基于 ML Kit OCR · 数据仅存储在本地", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))
-                Text("GitHub: https://github.com/zixij644-elaborate/pickup-code-app", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) } }
+                val uriHandler = LocalUriHandler.current
+                Text("GitHub: https://github.com/zixij644-elaborate/pickup-code-app",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier
+                        .clickable { uriHandler.openUri("https://github.com/zixij644-elaborate/pickup-code-app") }
+                        .padding(vertical = 2.dp)) } }
             item {
                 var upStatus by remember { mutableStateOf<String?>(null) }; var checking by remember { mutableStateOf(false) }
                 OutlinedButton(onClick = { checking = true; scope.launch { upStatus = checkUpdate(); checking = false } }, enabled = !checking) {
@@ -172,6 +196,46 @@ private fun LearningStatsPanel(ctx: android.content.Context, scope: kotlinx.coro
 }
 
 @Composable
+private fun DebouncedKeyField(
+    value: String,
+    label: String,
+    onCommit: (String) -> Unit,
+    onChange: (String) -> Unit,
+    isPassword: Boolean = false,
+    debounceMs: Long = 400
+) {
+    var text by remember { mutableStateOf(value) }
+    var visible by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    // 用 remember 持有 Job，避免重组时重置为 null 导致防抖失效（H5）
+    val saveJob = remember { mutableStateOf<Job?>(null) }
+
+    OutlinedTextField(
+        value = text,
+        onValueChange = {
+            text = it
+            onChange(it)
+            saveJob.value?.cancel()
+            saveJob.value = scope.launch {
+                delay(debounceMs)
+                onCommit(text)
+            }
+        },
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        label = { Text(label) },
+        visualTransformation = if (isPassword && !visible) PasswordVisualTransformation() else VisualTransformation.None,
+        trailingIcon = if (isPassword) {
+            {
+                TextButton(onClick = { visible = !visible }) {
+                    Text(if (visible) "隐藏" else "显示", style = MaterialTheme.typography.labelSmall)
+                }
+            }
+        } else null
+    )
+}
+
+@Composable
 private fun AmapHelpSection() {
     var expanded by remember { mutableStateOf(false) }
     Column {
@@ -227,13 +291,15 @@ private fun Switch(title: String, sub: String? = null, checked: Boolean, onChang
 }
 
 private suspend fun checkUpdate(): String = withContext(Dispatchers.IO) {
+    var resp: java.net.HttpURLConnection? = null
     try {
-        val resp = java.net.URL("https://api.github.com/repos/zixij644-elaborate/pickup-code-app/releases/latest")
+        resp = java.net.URL("https://api.github.com/repos/zixij644-elaborate/pickup-code-app/releases/latest")
             .openConnection() as java.net.HttpURLConnection
         resp.requestMethod = "GET"; resp.setRequestProperty("Accept", "application/vnd.github.v3+json")
         resp.connectTimeout = 10000; resp.readTimeout = 10000
         if (resp.responseCode != 200) return@withContext "检查失败"
-        val latest = org.json.JSONObject(resp.inputStream.bufferedReader().readText()).getString("tag_name").removePrefix("v")
+        val latest = org.json.JSONObject(resp.inputStream.bufferedReader().use { it.readText() }).getString("tag_name").removePrefix("v")
         if (latest == BuildConfig.VERSION_NAME) "当前已是最新版本" else "发现新版本 v$latest"
     } catch (e: Exception) { "检查失败: ${e.message}" }
+    finally { resp?.disconnect() }
 }

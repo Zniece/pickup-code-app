@@ -66,7 +66,8 @@ fun PickupCodeTheme(
     val view = LocalView.current
     if (!view.isInEditMode) {
         SideEffect {
-            val window = (view.context as Activity).window
+            val act = view.context as? Activity ?: return@SideEffect
+            val window = act.window
             window.statusBarColor = colorScheme.primary.toArgb()
             WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !isDark
         }

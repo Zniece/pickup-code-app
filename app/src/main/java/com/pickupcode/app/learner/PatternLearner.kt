@@ -48,7 +48,8 @@ object PatternLearner {
             .apply()
     }
 
-    /** Record that the extractor found nothing in the OCR output. */
+    /** Record that the extractor found nothing in the OCR output.
+     *  仅轻量记录；autoApply（读文件+聚类+写规则）通过低频节流触发，避免每次 miss 都做重 IO。 */
     fun recordMiss(context: Context, rawText: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -56,8 +57,8 @@ object PatternLearner {
             .putInt(KEY_MISSES, prefs.getInt(KEY_MISSES, 0) + 1)
             .apply()
         appendUnmatched(context, rawText)
-        // Auto-apply: check if we have enough failures to learn a new pattern
-        autoApply(context)
+        // 低频节流触发：距上次自动学习至少间隔后才重跑，避免高频 IO
+        autoApplyThrottled(context)
     }
 
     /** Record that a user confirmed an extracted code was correct.
@@ -357,10 +358,11 @@ object PatternLearner {
     )
 
     private const val KEY_LEARNED = "learned_rules"
+    private const val KEY_LAST_AUTOAPPLY = "last_autoapply"
+    private const val AUTP_APPLY_THROTTLE_MS = 6L * 60 * 60 * 1000 // 6h
 
     /** Check suggestions and auto-apply patterns with count ≥ minCount and confidence ≥ minConf. */
-    fun autoApply(context: Context, minCount: Int = MIN_SUGGEST, minConfidence: Float = 0.5f): List<LearnedRule> {
-        val suggestions = getSuggestions(context)
+    fun autoApply(context: Context, minCount: Int = MIN_SUGGEST, minConfidence: Float = 0.5f): List<LearnedRule> {        val suggestions = getSuggestions(context)
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val existing = getLearnedPatterns(context).toMutableList()
         val existingRegexes = existing.map { it.regex }.toSet()
@@ -395,6 +397,16 @@ object PatternLearner {
             clearUnmatched(context)
         }
         return newRules
+    }
+
+    /** 节流版 autoApply：距上次自动学习不足阈值则跳过，避免高频 IO（读文件+聚类+写规则）。 */
+    private fun autoApplyThrottled(context: Context) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val last = prefs.getLong(KEY_LAST_AUTOAPPLY, 0)
+        if (now - last < AUTP_APPLY_THROTTLE_MS) return
+        prefs.edit().putLong(KEY_LAST_AUTOAPPLY, now).apply()
+        autoApply(context)
     }
 
     fun getLearnedPatterns(context: Context): List<LearnedRule> {

@@ -16,11 +16,13 @@ import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.geocoder.GeocoderVerifier
+import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
 import com.pickupcode.app.learner.PatternLearner
 import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.*
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import java.io.File
 import java.io.FileOutputStream
@@ -40,9 +42,14 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             "com.kfc", "com.mcdonalds", "com.cainiao",
             "com.taobao.taobao", "com.jingdong.app.mall", "com.pinduoduo",
         )
-
-        private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     }
+
+    // 实例级协程作用域：随服务实例创建/销毁，onUnbind 时 cancel 避免跨重建累积泄漏（H2）
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    // 复用单例主线程 Handler：heartbeat 自续 + onAccessibilityEvent 延时调度共用，便于统一 removeCallbacks（H3/M2）
+    private val mainHandler = Handler(Looper.getMainLooper())
+    // 截图回调线程池：模块级单例，避免每次 captureAndExtract 新建线程泄漏（M7）
+    private val screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     private var lastAutoScanPkg: String? = null
     private var lastAutoScanTime = 0L
@@ -64,7 +71,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
         serviceInfo = info
 
-        Handler(Looper.getMainLooper()).postDelayed(heartbeat, 3000)
+        mainHandler.postDelayed(heartbeat, 3000)
     }
 
     private val heartbeat = object : Runnable {
@@ -73,14 +80,28 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 Log.d(TAG, "心跳兜底扫描")
                 performScan("手动触发")
             }
-            Handler(Looper.getMainLooper()).postDelayed(this, 3000)
+            mainHandler.postDelayed(this, 3000)
         }
+    }
+
+    override fun onUnbind(intent: android.content.Intent?): Boolean {
+        // 收敛协程与 Handler，避免服务卸载后空转/泄漏（H2/H3）
+        mainHandler.removeCallbacksAndMessages(null)
+        scope.cancel()
+        return super.onUnbind(intent)
+    }
+
+    override fun onDestroy() {
+        mainHandler.removeCallbacksAndMessages(null)
+        scope.cancel()
+        screenshotExecutor.shutdownNow()
+        super.onDestroy()
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (triggerRequested.getAndSet(false)) {
             Log.d(TAG, "磁贴触发，延迟扫描")
-            Handler(Looper.getMainLooper()).postDelayed({
+            mainHandler.postDelayed({
                 performScan("手动触发")
             }, 1200)
             return
@@ -94,7 +115,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 lastAutoScanPkg = pkg
                 lastAutoScanTime = now
                 Log.d(TAG, "自动扫描: $pkg")
-                Handler(Looper.getMainLooper()).postDelayed({
+                mainHandler.postDelayed({
                     performScan("自动检测: $pkg")
                 }, 800)
             }
@@ -153,13 +174,17 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     private fun captureAndExtract(source: String) {
         takeScreenshot(
             android.view.Display.DEFAULT_DISPLAY,
-            java.util.concurrent.Executors.newSingleThreadExecutor(),
+            screenshotExecutor,
             object : TakeScreenshotCallback {
                 override fun onSuccess(s: ScreenshotResult) {
                     val buf = s.hardwareBuffer
                     try {
-                        val bmp = Bitmap.wrapHardwareBuffer(buf, s.colorSpace)
+                        val hwBmp = Bitmap.wrapHardwareBuffer(buf, s.colorSpace)
                             ?: return showResult("截屏失败")
+                        // 深拷贝为普通位图：wrapHardwareBuffer 返回的位图依赖 buf 存活，
+                        // 若在 OCR 异步读取前 close buf 会读到已释放缓冲。拷贝后即可安全 close（H1）
+                        val bmp = hwBmp.copy(Bitmap.Config.ARGB_8888, false)
+                        hwBmp.recycle()
 
                         val timestamp = System.currentTimeMillis()
                         val path = saveScreenshot(bmp, timestamp)
@@ -191,23 +216,45 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         val allResults = mutableListOf<Pair<String, CodeExtractor.CodeType>>()
         val codeSources = mutableMapOf<String, String>()
 
-        // AI（需要总开关开启 + API Key 非空）
-        if (settings.enableAI && settings.apiKey.isNotBlank()) {
-            val aiResults = AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
-            for (ai in aiResults) {
-                if (isTypeEnabled(ai.type, settings)) {
-                    allResults.add(ai.code to ai.type)
-                    codeSources[ai.code] = ai.source
-                }
+        // AI（需要总开关开启 + API Key 非空）——异步并行，不阻塞正则主链
+        // 正则先跑、立即出结果；AI 结果到了再合并，最慢 15s 超时也不拖慢主流程（问题1）
+        val aiDeferred = if (settings.enableAI && settings.apiKey.isNotBlank()) {
+            scope.async(Dispatchers.IO) {
+                AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
             }
-        }
+        } else null
 
-        // 正则（总是运行，不因AI阻断）
+        // 正则（总是运行，主路径先行）
         val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this)
+        var regexHit = false
         for (re in regexResults) {
             if (re.confidence >= settings.confidenceThreshold && isTypeEnabled(re.type, settings)) {
                 allResults.add(re.code to re.type)
                 codeSources[re.code] = re.source
+                regexHit = true
+            }
+        }
+
+        // 合并 AI 结果：与正则同码同 type 直接去重；不同 type 才留给下方冲突提示（问题2）
+        var aiErr: String? = null
+        if (aiDeferred != null) {
+            try {
+                val aiRes = aiDeferred.await()
+                aiErr = aiRes.error
+                if (aiRes.error != null) {
+                    Log.w(TAG, "AI 识别失败: ${aiRes.error}")
+                }
+                for (ai in aiRes.results) {
+                    if (!isTypeEnabled(ai.type, settings)) continue
+                    // 同码同 type 已有（正则或其它 AI 项）→ 跳过；否则加入
+                    val alreadySame = allResults.any { it.first == ai.code && it.second == ai.type }
+                    if (alreadySame) continue
+                    allResults.add(ai.code to ai.type)
+                    codeSources.putIfAbsent(ai.code, ai.source)
+                }
+            } catch (e: Exception) {
+                aiErr = e.message ?: "AI同步异常"
+                Log.w(TAG, "AI 结果合并异常: ${e.message}")
             }
         }
 
@@ -231,7 +278,13 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
 
         if (allResults.isEmpty()) {
-            showResult("未识别到取餐码/取件码")
+            // 问题5：若正则未识别到且 AI 也失败，提示里带上失败原因（用户有感知）
+            if (settings.enableAI && settings.apiKey.isNotBlank()) {
+                if (aiErr != null) showResult("未识别到取餐码/取件码 · AI识别失败(${aiErr.take(40)})")
+                else showResult("未识别到取餐码/取件码")
+            } else {
+                showResult("未识别到取餐码/取件码")
+            }
             return
         }
 
@@ -256,6 +309,34 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         // 有冲突时通知用户自行判断
         if (conflicts.isNotEmpty()) {
             showResult("⚠️ 「${conflicts.joinToString("、")}」同时匹配取餐/取件类型，请进入App确认")
+        }
+
+        // 快递100 验证：识别到取件码时，用运单号反查取件码/地址作为标准答案，对照 OCR 结果（fire-and-forget）
+        if (settings.enableKuaidi100 && settings.kuaidi100Key.isNotBlank()) {
+            val trackingNum = CodeExtractor.findOrderNumber(allText)
+            if (trackingNum != null) {
+                scope.launch {
+                    val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum)
+                    Log.d(TAG, "Kuaidi100 verify: success=${res.success} code=${res.pickUpCode} station=${res.pickUpStation} address=${res.pickUpAddress} err=${res.errorMsg}")
+                    if (res.success && res.pickUpCode != null) {
+                        val ocrCodes = allResults.map { it.first }
+                        val matched = ocrCodes.any { it == res.pickUpCode }
+                        if (matched) {
+                            Log.d(TAG, "Kuaidi100 confirm: OCR码 ${res.pickUpCode} 与 API 一致 ✓")
+                        } else {
+                            Log.d(TAG, "Kuaidi100 mismatch: OCR=${ocrCodes}, API=${res.pickUpCode}")
+                        }
+                        // 若 OCR 未识别出地址，且 API 返回了标准地址，补全到该取件码记录
+                        if (address.isBlank() && !res.pickUpAddress.isNullOrBlank()) {
+                            val dao = AppDatabase.getInstance(this@PickupCodeAccessibilityService).codeHistoryDao()
+                            val rec = dao.findByCodeAndType(res.pickUpCode, CodeExtractor.CodeType.pickup_parcel.name)
+                            if (rec != null && rec.pickupAddress.isBlank()) {
+                                dao.update(rec.copy(pickupAddress = res.pickUpAddress))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -326,8 +407,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     }
 
     private fun showResult(msg: String) {
-        Handler(Looper.getMainLooper()).post {
-            val nm = getSystemService(android.app.NotificationManager::class.java)
+        mainHandler.post {
+            val nm = getSystemService(android.app.NotificationManager::class.java) ?: return@post
+            // 频道只需创建一次，但重复 create 是幂等的（同名频道会复用），保留以自取
             nm.createNotificationChannel(android.app.NotificationChannel(
                 CHANNEL_ID, "结果", android.app.NotificationManager.IMPORTANCE_DEFAULT))
             nm.notify(9998, NotificationCompat.Builder(this, CHANNEL_ID)

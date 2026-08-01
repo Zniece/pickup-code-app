@@ -1,14 +1,37 @@
 package com.pickupcode.app.service
 
+import android.accessibilityservice.AccessibilityServiceInfo
+import android.content.Context
+import android.provider.Settings
 import android.service.quicksettings.TileService
+import android.content.Intent
 import android.util.Log
 
 class PickupCodeTileService : TileService() {
 
     override fun onClick() {
         super.onClick()
-        PickupCodeAccessibilityService.triggerRequested.set(true)
-        Log.d("PickupCodeTile", "触发标记已设置")
+        if (isAccessibilityEnabled()) {
+            PickupCodeAccessibilityService.triggerRequested.set(true)
+            Log.d("PickupCodeTile", "触发标记已设置")
+        } else {
+            // 无障碍服务未连接：直接提示并跳转设置，避免点了没反应的困惑（M4）
+            Log.d("PickupCodeTile", "无障碍服务未开启，跳转设置")
+            try {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            } catch (e: Exception) {
+                Log.e("PickupCodeTile", "打开无障碍设置失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun isAccessibilityEnabled(): Boolean {
+        val enabledServices = Settings.Secure.getString(
+            contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        // split + 精确比对包名+服务类名，避免 contains 模糊匹配误判（M4/MainActivity低危项同源）
+        val target = "$packageName/${PickupCodeAccessibilityService::class.java.name}"
+        return enabledServices.split(':').any { it.trim() == target }
     }
 
     override fun onStartListening() {

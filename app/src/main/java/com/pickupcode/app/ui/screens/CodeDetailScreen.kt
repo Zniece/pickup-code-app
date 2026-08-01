@@ -165,7 +165,8 @@ fun CodeDetailScreen(
             if (item.screenshotPath.isNotBlank() && File(item.screenshotPath).exists()) {
                 var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
                 LaunchedEffect(item.screenshotPath) { bitmap = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(item.screenshotPath) } }
-                DisposableEffect(Unit) { onDispose { bitmap?.recycle() } }
+                // 不手动 recycle：Compose 的 Bitmap.asImageBitmap() 与状态共享受管理时，手动 recycle 可能造成
+                // 「已回收位图仍在绘制」崩溃（Canvas 绘制期 native 已释放）。交由 GC/Compose 生命周期管理。
                 Card(Modifier.fillMaxWidth().clickable { showFullscreen = true }) {
                     Column(Modifier.padding(16.dp)) {
                         Text("📷 截屏（点击放大）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

@@ -15,7 +15,7 @@ object CodeNotificationManager {
     private const val CHANNEL_PARCEL = "pickup_parcel"
 
     fun createChannels(context: Context) {
-        val manager = context.getSystemService(NotificationManager::class.java)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
         manager.createNotificationChannel(
             NotificationChannel(CHANNEL_FOOD, "取餐码", NotificationManager.IMPORTANCE_HIGH).apply {
                 description = "取餐码提醒"
@@ -30,18 +30,28 @@ object CodeNotificationManager {
         )
     }
 
+    private fun safeId(code: String): Int = code.hashCode() and 0x7fffffff
+
+    private data class TypeStyle(val channelId: String, val iconLabel: String, val title: String)
+
+    private fun typeStyle(type: CodeExtractor.CodeType): TypeStyle = when (type) {
+        CodeExtractor.CodeType.pickup_parcel -> TypeStyle(CHANNEL_PARCEL, "\uD83D\uDCE6", "取件码")
+        CodeExtractor.CodeType.pickup_food -> TypeStyle(CHANNEL_FOOD, "\uD83E\uDD64", "取餐码")
+    }
+
     fun show(context: Context, code: String, type: CodeExtractor.CodeType, source: String, historyId: Long? = null) {
-        val channelId: String
-        val iconLabel: String
-        val title: String
-        when (type) {
-            CodeExtractor.CodeType.pickup_parcel -> {
-                channelId = CHANNEL_PARCEL; iconLabel = "\uD83D\uDCE6"; title = "取件码"
-            }
-            CodeExtractor.CodeType.pickup_food -> {
-                channelId = CHANNEL_FOOD; iconLabel = "\uD83E\uDD64"; title = "取餐码"
-            }
+        // Android 13+ 需运行时通知权限，未授予则不发送（静默忽略，避免异常）
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
         }
+        val style = typeStyle(type)
+        val channelId = style.channelId
+        val iconLabel = style.iconLabel
+        val title = style.title
 
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
@@ -63,51 +73,53 @@ object CodeNotificationManager {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .addAction(0, "已取",
-                PendingIntent.getBroadcast(context, code.hashCode() + 1,
+                PendingIntent.getBroadcast(context, safeId(code) + 1,
                     Intent(context, DoneReceiver::class.java).apply {
                         putExtra("history_id", historyId ?: -1)
-                        putExtra("notification_id", code.hashCode())
+                        putExtra("notification_id", safeId(code))
                     },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "忽略",
-                PendingIntent.getBroadcast(context, code.hashCode(),
+                PendingIntent.getBroadcast(context, safeId(code),
                     Intent(context, NotificationDismissReceiver::class.java).apply {
-                        putExtra("notification_id", code.hashCode())
+                        putExtra("notification_id", safeId(code))
                     },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE))
             .build()
 
-        val nm = context.getSystemService(NotificationManager::class.java)
-        nm.notify(code.hashCode(), notification)
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.notify(safeId(code), notification)
     }
 
     fun dismiss(context: Context, code: String) {
-        val nm = context.getSystemService(NotificationManager::class.java)
-        nm.cancel(code.hashCode())
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.cancel(safeId(code))
     }
 
     fun dismissById(context: Context, id: Int) {
-        val nm = context.getSystemService(NotificationManager::class.java)
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.cancel(id)
     }
 
     /** Show notification for a duplicate code — informs user there are now ≥2 records for this code. */
     fun showDuplicate(context: Context, code: String, type: CodeExtractor.CodeType, source: String, historyId: Long, dupGroupCount: Int) {
-        val channelId = when (type) {
-            CodeExtractor.CodeType.pickup_parcel -> CHANNEL_PARCEL
-            CodeExtractor.CodeType.pickup_food -> CHANNEL_FOOD
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
         }
-        val iconLabel = when (type) {
-            CodeExtractor.CodeType.pickup_parcel -> "\uD83D\uDCE6"
-            CodeExtractor.CodeType.pickup_food -> "\uD83E\uDD64"
-        }
+        val style = typeStyle(type)
+        val channelId = style.channelId
+        val iconLabel = style.iconLabel
 
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("show_dedup", true)
         }
         val pendingIntent = PendingIntent.getActivity(
-            context, code.hashCode(), intent,
+            context, safeId(code), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
@@ -120,7 +132,7 @@ object CodeNotificationManager {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .build()
 
-        val nm = context.getSystemService(NotificationManager::class.java)
-        nm.notify("dup_$code".hashCode(), notification)
+        val nm = context.getSystemService(NotificationManager::class.java) ?: return
+        nm.notify("dup_$code".hashCode() and 0x7fffffff, notification)
     }
 }

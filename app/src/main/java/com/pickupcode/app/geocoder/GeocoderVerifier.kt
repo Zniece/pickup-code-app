@@ -144,55 +144,62 @@ object GeocoderVerifier {
             }
             val url = URL("$AMAP_URL?$params")
             val conn = url.openConnection() as HttpURLConnection
-            conn.connectTimeout = TIMEOUT_CONNECT_MS
-            conn.readTimeout = TIMEOUT_READ_MS
-            conn.requestMethod = "GET"
+            try {
+                conn.connectTimeout = TIMEOUT_CONNECT_MS
+                conn.readTimeout = TIMEOUT_READ_MS
+                conn.requestMethod = "GET"
 
-            val code = conn.responseCode
-            if (code != 200) {
-                Log.w(TAG, "AMap API returned HTTP $code")
-                return@withContext null
+                val code = conn.responseCode
+                if (code != 200) {
+                    Log.w(TAG, "AMap API returned HTTP $code")
+                    return@withContext null
+                }
+
+                val body = conn.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(body)
+
+                if (json.optInt("status") != 1) {
+                    Log.w(TAG, "AMap API status != 1: ${json.optString("info")}")
+                    return@withContext null
+                }
+
+                val geocodes = json.optJSONArray("geocodes")
+                if (geocodes == null || geocodes.length() == 0) {
+                    Log.d(TAG, "AMap: no geocode results")
+                    return@withContext null
+                }
+
+                val best = geocodes.getJSONObject(0)
+                val location = best.optString("location", "")
+                val parts = location.split(",")
+                val hasLatLon = parts.size == 2
+                // 高德 location 格式为 "经度,纬度"（如 116.397428,39.90923）—— parts[0]=经度(longitude), parts[1]=纬度(latitude)
+                val lon = if (hasLatLon) parts[0].toDoubleOrNull() else null
+                val lat = if (hasLatLon) parts[1].toDoubleOrNull() else null
+
+                val amapLevel = best.optString("level", "")
+                val confidence = when {
+                    amapLevel.contains("门牌号") || amapLevel.contains("兴趣点") -> CONFIDENCE_HIGH
+                    amapLevel.contains("道路") || amapLevel.contains("村庄") -> CONFIDENCE_MEDIUM
+                    amapLevel.contains("区县") || amapLevel.contains("乡镇") -> CONFIDENCE_LOW
+                    amapLevel.contains("城市") -> CONFIDENCE_MINIMAL
+                    hasLatLon -> 0.7f
+                    else -> 0f
+                }
+
+                GeocodedResult(
+                    address = address,
+                    formattedAddress = best.optString("formatted_address", null)
+                        ?: best.optString("name", null),
+                    latitude = lat,
+                    longitude = lon,
+                    verified = hasLatLon,
+                    confidence = confidence,
+                    provider = "amap"
+                )
+            } finally {
+                conn.disconnect()
             }
-
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            val json = JSONObject(body)
-
-            if (json.optInt("status") != 1) {
-                Log.w(TAG, "AMap API status != 1: ${json.optString("info")}")
-                return@withContext null
-            }
-
-            val geocodes = json.optJSONArray("geocodes")
-            if (geocodes == null || geocodes.length() == 0) {
-                Log.d(TAG, "AMap: no geocode results")
-                return@withContext null
-            }
-
-            val best = geocodes.getJSONObject(0)
-            val location = best.optString("location", "")
-            val parts = location.split(",")
-            val hasLatLon = parts.size == 2
-
-            val amapLevel = best.optString("level", "")
-            val confidence = when {
-                amapLevel.contains("门牌号") || amapLevel.contains("兴趣点") -> CONFIDENCE_HIGH
-                amapLevel.contains("道路") || amapLevel.contains("村庄") -> CONFIDENCE_MEDIUM
-                amapLevel.contains("区县") || amapLevel.contains("乡镇") -> CONFIDENCE_LOW
-                amapLevel.contains("城市") -> CONFIDENCE_MINIMAL
-                hasLatLon -> 0.7f
-                else -> 0f
-            }
-
-            GeocodedResult(
-                address = address,
-                formattedAddress = best.optString("formatted_address", null)
-                    ?: best.optString("name", null),
-                latitude = if (hasLatLon) parts[0].toDoubleOrNull() else null,
-                longitude = if (hasLatLon) parts[1].toDoubleOrNull() else null,
-                verified = hasLatLon,
-                confidence = confidence,
-                provider = "amap"
-            )
         } catch (e: Exception) {
             Log.e(TAG, "AMap geocoder error: ${e.message}")
             null

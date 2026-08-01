@@ -23,16 +23,21 @@ fun NotificationPermissionBanner(
 
     Card(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(16.dp),
+            .fillMaxWidth(),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.errorContainer
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                "需要通知权限才能在锁屏显示取餐码",
-                style = MaterialTheme.typography.bodyMedium
+                "🔔 需要通知权限",
+                style = MaterialTheme.typography.titleSmall
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "开启后才能在锁屏/通知栏显示取餐取件码",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(8.dp))
             Button(onClick = onRequestPermission) {
