@@ -1,5 +1,7 @@
 package com.pickupcode.app.ui.screens
 
+import android.content.Intent
+import android.util.Log
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
@@ -11,7 +13,9 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
@@ -56,7 +60,7 @@ fun CodeDetailScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Card(Modifier.fillMaxWidth()) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("类型", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     val label = when (item.type) {
@@ -95,7 +99,15 @@ fun CodeDetailScreen(
             }
 
             EditableField(label = "来源", value = item.source, displayFontSize = 18.sp,
-                onSave = { onUpdated(item.copy(source = it)) })
+                onSave = { onUpdated(item.copy(source = it)) },
+                trailingAction = {
+                    // 🚪 跳转来源 App（与取件地址卡的 📍 同布局：右端图标）。仅当有关分享来源显示。
+                    if (item.shareSourcePkg.isNotBlank()) {
+                        IconButton(onClick = { com.pickupcode.app.share.ShareReceiver.openApp(ctx, item.shareSourcePkg) }) {
+                            Text("🚪", fontSize = 20.sp)
+                        }
+                    }
+                })
             if (item.isActive) {
                 InlineConfirm("来源正确", confirmed = sourceConfirmed, incorrect = sourceIncorrect,
                     onCorrect = {
@@ -117,7 +129,13 @@ fun CodeDetailScreen(
 
             if (item.pickupAddress.isNotBlank()) {
                 EditableField(label = "取件地址", value = item.pickupAddress, displayFontSize = 16.sp,
-                    onSave = { onUpdated(item.copy(pickupAddress = it)) })
+                    onSave = { onUpdated(item.copy(pickupAddress = it)) },
+                    trailingAction = {
+                        // 📍 唤起导航：用 geo: URI 让系统地图应用弹出选择（与分享来源卡片的 🚪 同布局：右端图标）
+                        IconButton(onClick = { launchNavigation(ctx, item.pickupAddress) }) {
+                            Text("📍", fontSize = 20.sp)
+                        }
+                    })
                 // Show geo verification badge
                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (item.geoVerified) {
@@ -160,14 +178,14 @@ fun CodeDetailScreen(
                 }
             }
 
-
             var showFullscreen by remember { mutableStateOf(false) }
             if (item.screenshotPath.isNotBlank() && File(item.screenshotPath).exists()) {
                 var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
                 LaunchedEffect(item.screenshotPath) { bitmap = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(item.screenshotPath) } }
                 // 不手动 recycle：Compose 的 Bitmap.asImageBitmap() 与状态共享受管理时，手动 recycle 可能造成
                 // 「已回收位图仍在绘制」崩溃（Canvas 绘制期 native 已释放）。交由 GC/Compose 生命周期管理。
-                Card(Modifier.fillMaxWidth().clickable { showFullscreen = true }) {
+                Card(Modifier.fillMaxWidth().clickable { showFullscreen = true },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                     Column(Modifier.padding(16.dp)) {
                         Text("📷 截屏（点击放大）", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(8.dp))
@@ -182,7 +200,7 @@ fun CodeDetailScreen(
                 }
             }
 
-            Card(Modifier.fillMaxWidth()) {
+            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("OCR 原始文本", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(4.dp))
@@ -212,7 +230,8 @@ fun CodeDetailScreen(
                     }
                 }
                 if (onMarkDone != null) {
-                    Button(onClick = { confirmAll(); onMarkDone(item.id) }, modifier = Modifier.fillMaxWidth()) {
+                    Button(onClick = { confirmAll(); onMarkDone(item.id) }, modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8DC0E0), contentColor = Color.White)) {
                         Text("📦 标记已取")
                     }
                 }
@@ -232,7 +251,9 @@ private fun InlineConfirm(label: String, confirmed: Boolean, incorrect: Boolean,
         return
     }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = onCorrect, modifier = Modifier.weight(1f)) {
+        OutlinedButton(onClick = onCorrect, modifier = Modifier.weight(1f),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)),
+            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
             Text(label, style = MaterialTheme.typography.labelSmall)
         }
         TextButton(onClick = onIncorrect, modifier = Modifier.weight(1f),
@@ -245,22 +266,36 @@ private fun InlineConfirm(label: String, confirmed: Boolean, incorrect: Boolean,
 
 @Composable
 private fun EditableField(label: String, value: String, displayFontSize: androidx.compose.ui.unit.TextUnit,
-                          displayFontWeight: FontWeight? = null, onSave: (String) -> Unit) {
+                          displayFontWeight: FontWeight? = null, onSave: (String) -> Unit,
+                          trailingAction: (@Composable () -> Unit)? = null) {
     var editing by remember { mutableStateOf(false) }
     var editedValue by remember(value) { mutableStateOf(value) }
     val scope = rememberCoroutineScope()
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(4.dp))
-            if (editing) {
-                OutlinedTextField(editedValue, { editedValue = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = { editing = false }) { Text("取消") }
-                    TextButton(onClick = { editing = false; scope.launch { onSave(editedValue) } }) { Text("保存") } }
-            } else {
-                Text(value, fontSize = displayFontSize, fontWeight = displayFontWeight)
-                TextButton(onClick = { editing = true; editedValue = value }) { Text("编辑") }
+    // 卡片背景与主页一致（surfaceVariant 浅灰），配合 Sleek 极简风
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+        Row(
+            Modifier.padding(16.dp).fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(4.dp))
+                if (editing) {
+                    OutlinedTextField(editedValue, { editedValue = it }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { editing = false }) { Text("取消") }
+                        TextButton(onClick = { editing = false; scope.launch { onSave(editedValue) } }) { Text("保存") } }
+                } else {
+                    Text(value, fontSize = displayFontSize, fontWeight = displayFontWeight, color = Color.Black)
+                    TextButton(
+                        onClick = { editing = true; editedValue = value },
+                        colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF8DC0E0))
+                    ) { Text("编辑") }
+                }
+            }
+            // 右侧尾部动作（如：地址卡片的 📍 唤起导航），可空则只占左侧
+            if (trailingAction != null) {
+                trailingAction()
             }
         }
     }
@@ -269,4 +304,17 @@ private fun EditableField(label: String, value: String, displayFontSize: android
 private val DETAIL_TIMESTAMP_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 private fun formatTimestamp(epochMillis: Long): String {
     return ZonedDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneId.systemDefault()).format(DETAIL_TIMESTAMP_FORMATTER)
+}
+
+/** 唤起系统导航：Geo URI → 弹出已装地图 App（高德/百度/腾讯等）匹配导航。 */
+private fun launchNavigation(context: android.content.Context, address: String) {
+    if (address.isBlank()) return
+    try {
+        val encoded = android.net.Uri.encode(address, ",，。. ")
+        val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("geo:0,0?q=$encoded"))
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    } catch (e: Exception) {
+        Log.w("CodeDetail", "唤起导航失败: ${e.message}")
+    }
 }

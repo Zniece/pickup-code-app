@@ -342,7 +342,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             val trackingNum = CodeExtractor.findOrderNumber(allText)
             if (trackingNum != null) {
                 scope.launch {
-                    val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum)
+                    val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum, Kuaidi100Verifier.guessCourierCode(trackingNum))
                     Log.d(TAG, "Kuaidi100 verify: success=${res.success} code=${res.pickUpCode} station=${res.pickUpStation} address=${res.pickUpAddress} err=${res.errorMsg}")
                     if (res.success && res.pickUpCode != null) {
                         val ocrCodes = allResults.map { it.first }

@@ -48,6 +48,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.lifecycleScope
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
@@ -331,18 +332,11 @@ fun MainScreen(
             }
         }
     ) { padding ->
-        // 类玻璃背景：柔和渐变底色，让半透明卡片透出层次
+        // Sleek 纯白背景（极简；去掉渐变以匹配 Sleek 干净利落的视觉）
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                            MaterialTheme.colorScheme.surface
-                        )
-                    )
-                )
+                .background(MaterialTheme.colorScheme.background)
         ) {
         LazyColumn(
             modifier = Modifier
@@ -477,7 +471,8 @@ fun MainScreen(
                                 val snackbarResult = snackbarHostState.showSnackbar(message = "已移至回收站，24小时后自动删除", actionLabel = "撤销", duration = SnackbarDuration.Short)
                                 if (snackbarResult == SnackbarResult.ActionPerformed) { db.codeHistoryDao().restore(item.id) }
                             }
-                        }
+                        },
+                        onOpenSource = { pkg -> com.pickupcode.app.share.ShareReceiver.openApp(context, pkg) }
                     )
                 }
             }
@@ -491,9 +486,10 @@ fun CodeHistoryCard(
     item: CodeHistory,
     onClick: () -> Unit,
     onDelete: () -> Unit,
-    onDone: (() -> Unit)? = null
+    onDone: (() -> Unit)? = null,
+    onOpenSource: ((String) -> Unit)? = null
 ) {
-    // 卡片：容器=边缘相近的莫兰迪浅灰蓝（简单统一，不加半透明避免边缘脱节）
+    // 卡片：浅灰容器，Spacious 下突出卡片层次
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -542,21 +538,44 @@ fun CodeHistoryCard(
                 },
                 style = MaterialTheme.typography.headlineMedium
             )
-            if (onDone != null) {
-                IconButton(onClick = onDone) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = "标记已取",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
+            // 右侧操作区（B 布局）：✅ 主位（左）+ 右边上下 🚪(上)/🗑️(下)，三者等大
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                // ✅ 主位：标记已取（与类型 emoji 同大的 headlineMedium 尺寸）
+                if (onDone != null) {
+                    IconButton(onClick = onDone, modifier = Modifier.size(52.dp)) {
+                        Icon(
+                            Icons.Default.Check,
+                            contentDescription = "标记已取",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(MaterialTheme.typography.headlineMedium.fontSize.value.dp)
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.size(52.dp))
                 }
-            }
-            IconButton(onClick = onDelete) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "删除",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                // 右列：上 🚪 / 下 🗑️
+                Column(horizontalAlignment = Alignment.End) {
+                    // 🚪 右上：跳转来源 App（与类型 emoji 同大），仅当有分享来源时显示
+                    if (onOpenSource != null && item.shareSourcePkg.isNotBlank()) {
+                        IconButton(onClick = { onOpenSource(item.shareSourcePkg) }, modifier = Modifier.size(52.dp)) {
+                            Text(
+                                "🚪",
+                                fontSize = MaterialTheme.typography.headlineMedium.fontSize
+                            )
+                        }
+                    } else {
+                        Spacer(Modifier.size(52.dp))
+                    }
+                    // 🗑️ 右下：删除（与类型 emoji 同大）
+                    IconButton(onClick = onDelete, modifier = Modifier.size(52.dp)) {
+                        Icon(
+                            Icons.Default.Delete,
+                            contentDescription = "删除",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(MaterialTheme.typography.headlineMedium.fontSize.value.dp)
+                        )
+                    }
+                }
             }
         }
     }

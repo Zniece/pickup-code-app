@@ -372,6 +372,13 @@ object PatternLearner {
             if (s.count < minCount || s.confidence < minConfidence) continue
             if (s.proposedRegex in existingRegexes) continue
 
+            // 加固：拒绝过度泛化的 token —— 含 'X'(任意字符) 的 token 会生成匹配任何文本的规则，
+            // 极易误报（如 X-d4 会匹配 "A-1234" 也会匹配 "啊-1234"）。只采纳由明确字符类
+            // （数字 d / 字母 L / 连字符 / 下划线 / 点 / 空格）构成的模式。
+            if (s.tokenPattern.any { it != 'd' && it != 'L' && it != '-' && it != '_' && it != ' ' && it != '.' && !it.isDigit() }) {
+                continue
+            }
+
             // Guess type: letter+digit combos are usually parcel codes
             val type = if (s.label.contains("letter") || s.tokenPattern.any { it == 'L' } || s.tokenPattern.contains('-'))
                 "pickup_parcel" else "pickup_food"

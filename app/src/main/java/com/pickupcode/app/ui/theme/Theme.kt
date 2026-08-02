@@ -36,30 +36,30 @@ private val LightColorScheme = lightColorScheme(
 
 // 灰蓝调深色（与 7E9EB5 主色统一）
 private val DarkColorScheme = darkColorScheme(
-    primary = Color(0xFF9FBBD0),
-    onPrimary = Color(0xFF1D3A4C),
-    primaryContainer = Color(0xFF33536B),
-    onPrimaryContainer = Color(0xFFD6E3ED),
-    secondary = Color(0xFFB3C1CB),
-    onSecondary = Color(0xFF22323C),
-    secondaryContainer = Color(0xFF39474F),
-    onSecondaryContainer = Color(0xFFDDE7EC),
-    surface = Color(0xFF24292E),
-    onSurface = Color(0xFFE6EBEF),
-    surfaceVariant = Color(0xFF3A4147),
-    onSurfaceVariant = Color(0xFFC2CBD1),
-    error = Color(0xFFF2B8B5),
-    onError = Color(0xFF601410),
-    background = Color(0xFF1C2024),
-    onBackground = Color(0xFFE6EBEF)
+    primary = Color(0xFF60A5FA),
+    onPrimary = Color(0xFF0B1220),
+    primaryContainer = Color(0xFF1E3A5F),
+    onPrimaryContainer = Color(0xFF93C5FD),
+    secondary = Color(0xFFA78BFA),
+    onSecondary = Color(0xFF170F29),
+    secondaryContainer = Color(0xFF3B2A63),
+    onSecondaryContainer = Color(0xFFE9E4FC),
+    surface = Color(0xFF111827),
+    onSurface = Color(0xFFE5E7EB),
+    surfaceVariant = Color(0xFF1F2937),
+    onSurfaceVariant = Color(0xFF9CA3AF),
+    error = Color(0xFFFCA5A5),
+    onError = Color(0xFF3F0D0D),
+    background = Color(0xFF0F172A),
+    onBackground = Color(0xFFE5E7EB)
 )
 
-// 大圆角现代风格
+// Sleek 小圆角（sm=4dp, md=8dp）——利落方正
 private val AppShapes = Shapes(
-    small = RoundedCornerShape(14.dp),
-    medium = RoundedCornerShape(18.dp),
-    large = RoundedCornerShape(24.dp),
-    extraLarge = RoundedCornerShape(28.dp)
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(8.dp),
+    large = RoundedCornerShape(4.dp),
+    extraLarge = RoundedCornerShape(8.dp)
 )
 
 @Composable

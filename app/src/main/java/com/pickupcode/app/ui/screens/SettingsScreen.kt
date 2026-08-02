@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -58,7 +59,12 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
                 Slider(value = confDraft,
                     onValueChange = { confDraft = it },
                     onValueChangeFinished = { scope.launch(Dispatchers.IO) { AppPreferences.setConfidenceThreshold(ctx, confDraft) } },
-                    valueRange = 0.1f..0.8f, modifier = Modifier.weight(1f))
+                    valueRange = 0.1f..0.8f, modifier = Modifier.weight(1f),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF8DC0E0),
+                        activeTrackColor = Color(0xFFBBD8EC),
+                        inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant
+                    ))
                 Text("${(confDraft * 100).roundToInt()}%", modifier = Modifier.padding(start = 8.dp)) } }
             item { HorizontalDivider() }
 
@@ -79,7 +85,9 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { OutlinedButton(
                 onClick = { scope.launch(Dispatchers.IO) { AppPreferences.setHideAccessibilityCard(ctx, false) } },
                 enabled = s.hideAccessibilityCard,
-                modifier = Modifier.fillMaxWidth()) { Text("在主页重新显示无障碍提示") } }
+                modifier = Modifier.fillMaxWidth(),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color.Black),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)) { Text("在主页重新显示无障碍提示") } }
             item { HorizontalDivider() }
 
             item { Text("🗺️ 地图验证", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -102,7 +110,9 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { HorizontalDivider() }
 
             item { Text("📊 自学习统计", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
-            item { OutlinedButton(onClick = onStatsClick, modifier = Modifier.fillMaxWidth()) { Text("查看详细统计 →") } }
+            item { OutlinedButton(onClick = onStatsClick, modifier = Modifier.fillMaxWidth(),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF8DC0E0)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFF8DC0E0))) { Text("查看详细统计 →") } }
             item { LearningStatsPanel(ctx, scope) }
             item { HorizontalDivider() }
 
@@ -124,13 +134,15 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
                 val uriHandler = LocalUriHandler.current
                 Text("GitHub: https://github.com/zixij644-elaborate/pickup-code-app",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
+                    color = Color(0xFF8DC0E0),
                     modifier = Modifier
                         .clickable { uriHandler.openUri("https://github.com/zixij644-elaborate/pickup-code-app") }
                         .padding(vertical = 2.dp)) } }
             item {
                 var upStatus by remember { mutableStateOf<String?>(null) }; var checking by remember { mutableStateOf(false) }
-                OutlinedButton(onClick = { checking = true; scope.launch { upStatus = checkUpdate(); checking = false } }, enabled = !checking) {
+                OutlinedButton(onClick = { checking = true; scope.launch { upStatus = checkUpdate(); checking = false } }, enabled = !checking,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.Black),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)) {
                     Text(if (checking) "检查中..." else "检查更新") }
                 upStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
@@ -162,11 +174,11 @@ private fun LearningStatsPanel(ctx: android.content.Context, scope: kotlinx.coro
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("扫描 ${s.totalScans} 次 · 命中 ${s.attempts} 次（${hitRate}%）· 漏检 ${s.misses} 次", style = MaterialTheme.typography.bodyMedium)
         if (s.verified > 0) {
-            Text("已确认 ${s.verified} 次", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            Text("已确认 ${s.verified} 次", style = MaterialTheme.typography.bodySmall, color = Color.Black)
         }
 
         if (s.perPattern.isNotEmpty()) {
-            Text("格式命中：", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+            Text("格式命中：", style = MaterialTheme.typography.labelMedium, color = Color.Black)
             for ((p, n) in s.perPattern.entries.sortedByDescending { it.value }) {
                 Text("  $p : $n 次", style = MaterialTheme.typography.bodySmall)
             }
@@ -179,11 +191,11 @@ private fun LearningStatsPanel(ctx: android.content.Context, scope: kotlinx.coro
         }
 
         if (suggestions.isNotEmpty()) {
-            Text("候选模式：", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.tertiary)
+            Text("候选模式：", style = MaterialTheme.typography.labelMedium, color = Color(0xFF8DC0E0))
             for (sg in suggestions.take(3)) {
                 Text("  ${sg.label} — ${sg.count} 条未匹配", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
                 Text("  样例: ${sg.sampleCodes.joinToString("，")}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("  建议: ${sg.proposedRegex}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.tertiary)
+                Text("  建议: ${sg.proposedRegex}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF8DC0E0))
             }
         }
 
@@ -192,7 +204,7 @@ private fun LearningStatsPanel(ctx: android.content.Context, scope: kotlinx.coro
                 PatternLearner.clearUnmatched(ctx)
                 suggestions = PatternLearner.getSuggestions(ctx)
             }
-        }) { Text("清除未匹配样本", style = MaterialTheme.typography.labelSmall) }
+        }, colors = ButtonDefaults.textButtonColors(contentColor = Color.Black)) { Text("清除未匹配样本", style = MaterialTheme.typography.labelSmall) }
     }
 }
 
@@ -228,7 +240,8 @@ private fun DebouncedKeyField(
         visualTransformation = if (isPassword && !visible) PasswordVisualTransformation() else VisualTransformation.None,
         trailingIcon = if (isPassword) {
             {
-                TextButton(onClick = { visible = !visible }) {
+                TextButton(onClick = { visible = !visible },
+                    colors = ButtonDefaults.textButtonColors(contentColor = Color.Black)) {
                     Text(if (visible) "隐藏" else "显示", style = MaterialTheme.typography.labelSmall)
                 }
             }
@@ -288,7 +301,15 @@ private fun Kuaidi100HelpSection() {
 private fun Switch(title: String, sub: String? = null, checked: Boolean, onChange: (Boolean) -> Unit) {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.bodyLarge); sub?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
-        Switch(checked = checked, onCheckedChange = onChange) }
+        // 激活色用柔和雾蓝 #8DC0E0（不用亮蓝 primary，避免刺眼）
+        Switch(checked = checked, onCheckedChange = onChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = Color(0xFF8DC0E0),
+                checkedTrackColor = Color(0xFFBBD8EC),
+                uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
+            ))
+    }
 }
 
 private suspend fun checkUpdate(): String = withContext(Dispatchers.IO) {

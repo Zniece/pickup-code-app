@@ -2,6 +2,8 @@ package com.pickupcode.app.share
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -28,6 +30,123 @@ import java.io.FileOutputStream
 object ShareReceiver {
 
     private const val TAG = "ShareReceiver"
+
+    // 常见分享来源 app 包名 → 可读名（无包名的兜底映射）
+    private val KNOWN_SOURCE_PACKAGES = mapOf(
+        "com.tencent.mm" to "微信",
+        "com.tencent.mobileqq" to "QQ",
+        "com.sankuai.meituan" to "美团",
+        "com.sankuai.meituan.takeoutnew" to "美团外卖",
+        "me.ele" to "饿了么",
+        "com.taobao.taobao" to "淘宝",
+        "com.xingin.xhs" to "小红书",
+        "com.ss.android.ugc.aweme" to "抖音",
+        "com.tencent.wework" to "企业微信",
+        "com.android.bluetooth" to "蓝牙",
+        "com.android.gallery3d" to "相册",
+        "com.miui.gallery" to "相册",
+        "com.huawei.photos" to "相册",
+        "com.vivo.gallery" to "相册",
+        "com.oppo.gallery" to "相册",
+        "com.android.documentsui" to "文件",
+        "com.google.android.apps.photos" to "Google相册",
+        "com.samsung.android.app.simplesharing" to "三星分享"
+    )
+
+    /**
+     * 解析本次分享的来源 App（包名 + 可读名）。
+     * 优先用 ClipData 中 content URI 的 authority 查 provider 包名；
+     * 兜底用 EXTRA_REFERRER 的 host。拿不到则返回空对。
+     */
+    private data class ShareSource(val pkg: String, val name: String)
+
+    /** 兼容 API 33 前取 Parcelable 分享流：新签名需 API 33，老设备回退旧重载（minSdk 26）。 */
+    @Suppress("DEPRECATION")
+    private fun getStreamUri(intent: Intent): Uri? =
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+        } else {
+            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+        }
+
+    private fun resolveShareSource(context: Context, intent: Intent?): ShareSource {
+        if (intent == null) return ShareSource("", "")
+        val pm = context.packageManager
+        var pkg = ""
+
+        // 1) ClipData 中第一个 content URI 的 authority → 查提供方 provider 包名
+        try {
+            val clip = intent.clipData
+            val streamUri: Uri? = getStreamUri(intent)
+            val uri: Uri? = when {
+                clip != null && clip.itemCount > 0 -> clip.getItemAt(0).uri
+                streamUri != null -> streamUri
+                else -> null
+            }
+            if (uri != null && uri.scheme == "content" && !uri.authority.isNullOrBlank()) {
+                val auth = uri.authority
+                if (auth != null) {
+                    val provider = pm.resolveContentProvider(auth, 0)
+                    val pk = provider?.packageName
+                    if (!pk.isNullOrBlank()) pkg = pk
+                }
+            }
+        } catch (_: Exception) {
+        }
+
+        // 2) authority 本身含包名（部分系统 provider）
+        if (pkg.isBlank()) {
+            try {
+                val clip = intent.clipData
+                val authority = if (clip != null && clip.itemCount > 0) clip.getItemAt(0).uri?.authority else null
+                if (!authority.isNullOrBlank() && authority.contains(".") && isPackageInstalled(pm, authority)) pkg = authority
+            } catch (_: Exception) {
+            }
+        }
+        // 3) EXTRA_REFERRER host
+        if (pkg.isBlank()) {
+            try {
+                val referrer = intent.getParcelableExtra(Intent.EXTRA_REFERRER, Uri::class.java)
+                if (referrer != null && !referrer.host.isNullOrBlank()) pkg = referrer.host ?: ""
+            } catch (_: Exception) {
+            }
+        }
+        if (pkg.isBlank()) return ShareSource("", "")
+        return ShareSource(pkg, packageLabel(pm, pkg))
+    }
+
+    private fun isPackageInstalled(pm: PackageManager, pkg: String): Boolean {
+        return try { pm.getApplicationInfo(pkg, 0); true } catch (_: Exception) { false }
+    }
+
+    /** 包名 → 可读 app 名（优先已知映射表，回退已安装 label，最后回退包名） */
+    private fun packageLabel(pm: PackageManager, pkg: String): String {
+        KNOWN_SOURCE_PACKAGES[pkg]?.let { return it }
+        return try {
+            val info: ApplicationInfo = pm.getApplicationInfo(pkg, 0)
+            pm.getApplicationLabel(info)?.toString() ?: pkg
+        } catch (_: Exception) {
+            pkg
+        }
+    }
+
+    /**
+     * 公开：启动指定包名的 App（供卡片/详情页的 🚪 跳转使用）。
+     * 包名为空或未安装时静默失败。
+     */
+    fun openApp(context: Context, pkg: String) {
+        if (pkg.isBlank()) return
+        try {
+            val pm = context.packageManager
+            val intent = pm.getLaunchIntentForPackage(pkg)
+            if (intent != null) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                context.startActivity(intent)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "openApp failed for $pkg: ${e.message}")
+        }
+    }
 
     // Handle share/drag-drop intents from other apps.
     // Reads settings asynchronously -- does not block the caller.
@@ -61,33 +180,39 @@ object ShareReceiver {
     }
 
     private suspend fun dispatch(context: Context, intent: Intent, isProcessText: Boolean, scope: CoroutineScope) {
+        val src = resolveShareSource(context, intent)
         if (isProcessText) {
             val text = intent.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT)?.toString()
-            if (!text.isNullOrBlank()) processText(context, text, "TextSelection", scope)
+            if (!text.isNullOrBlank()) processText(context, text, "TextSelection", scope, src)
         } else when {
             intent.type?.startsWith("text/") == true -> {
                 val text = intent.getStringExtra(Intent.EXTRA_TEXT)
-                if (!text.isNullOrBlank()) processText(context, text, "SharedText", scope)
+                if (!text.isNullOrBlank()) processText(context, text, "SharedText", scope, src)
             }
             intent.type?.startsWith("image/") == true -> {
-                val uri: Uri? = intent.getParcelableExtra(Intent.EXTRA_STREAM)
-                    ?: intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
-                if (uri != null) processImage(context, uri, "SharedImage", scope)
+                val uri: Uri? = getStreamUri(intent)
+                if (uri != null) processImage(context, uri, "SharedImage", scope, src)
             }
         }
     }
 
-    private suspend fun processText(context: Context, text: String, sourceLabel: String, scope: CoroutineScope) {
+    private suspend fun processText(
+        context: Context, text: String, sourceLabel: String, scope: CoroutineScope,
+        shareSource: ShareSource?
+    ) {
         val lines = text.lines().map { line ->
             OCREngine.TextLine(text = line.trim(), boundingBox = null, confidence = 1.0f)
         }.filter { it.text.isNotBlank() }
         if (lines.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
         val address = CodeExtractor.extractAddress(lines, allText)
-        extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address, scope)
+        extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address, scope, shareSource = shareSource)
     }
 
-    private suspend fun processImage(context: Context, uri: Uri, sourceLabel: String, scope: CoroutineScope) {
+    private suspend fun processImage(
+        context: Context, uri: Uri, sourceLabel: String, scope: CoroutineScope,
+        shareSource: ShareSource?
+    ) {
         val bitmap = withContext(Dispatchers.IO) {
             try {
                 decodeSampledBitmap(context, uri)
@@ -131,7 +256,7 @@ object ShareReceiver {
         val allText = lines.joinToString(" ") { it.text }
         val address = CodeExtractor.extractAddress(lines, allText)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
-        extractAndNotify(context, lines, snippet, screenshotPath, address, scope, coupons)
+        extractAndNotify(context, lines, snippet, screenshotPath, address, scope, coupons, shareSource)
     }
 
     private suspend fun extractAndNotify(
@@ -141,8 +266,11 @@ object ShareReceiver {
         screenshotPath: String = "",
         address: String = "",
         scope: CoroutineScope,
-        coupons: List<CouponDetector.CouponResult> = emptyList()
+        coupons: List<CouponDetector.CouponResult> = emptyList(),
+        shareSource: ShareSource? = null
     ) {
+        val shareSourcePkg = shareSource?.pkg ?: ""
+        val shareSourceName = shareSource?.name ?: ""
         val allText = lines.joinToString(" ") { it.text }
         val db = AppDatabase.getInstance(context)
         val settings = withContext(Dispatchers.IO) { AppPreferences.observe(context).first() }
@@ -206,6 +334,8 @@ object ShareReceiver {
                     source = result.source,
                     rawTextSnippet = rawSnippet,
                     pickupAddress = address.ifBlank { existing.pickupAddress },
+                    shareSourcePkg = shareSourcePkg.ifEmpty { existing.shareSourcePkg },
+                    shareSourceName = shareSourceName.ifEmpty { existing.shareSourceName },
                     isActive = true,
                     doneAt = 0
                 ))
@@ -217,7 +347,9 @@ object ShareReceiver {
                     source = result.source,
                     rawTextSnippet = rawSnippet,
                     pickupAddress = address,
-                    screenshotPath = screenshotPath
+                    screenshotPath = screenshotPath,
+                    shareSourcePkg = shareSourcePkg,
+                    shareSourceName = shareSourceName
                 ))
             }
 
@@ -266,7 +398,7 @@ object ShareReceiver {
             if (trackingNum != null) {
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum)
+                        val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum, Kuaidi100Verifier.guessCourierCode(trackingNum))
                         Log.d(TAG, "Kuaidi100 verify: success=${res.success} code=${res.pickUpCode} address=${res.pickUpAddress} err=${res.errorMsg}")
                         if (res.success && res.pickUpCode != null) {
                             val ocrCodes = allResults.map { it.code }

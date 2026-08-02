@@ -17,5 +17,7 @@ data class CodeHistory(
     val geoFormattedAddress: String = "", // 地图返回的规范化地址
     val timestamp: Long = System.currentTimeMillis(),
     val isActive: Boolean = true,
-    val doneAt: Long = 0       // 标记已取/删除的时间，0=未操作
+    val doneAt: Long = 0,       // 标记已取/删除的时间，0=未操作
+    val shareSourcePkg: String = "", // 分享来源 App 包名（如 com.tencent.mm）；无=空
+    val shareSourceName: String = "" // 分享来源 App 可读名（如 微信）；无=空
 )

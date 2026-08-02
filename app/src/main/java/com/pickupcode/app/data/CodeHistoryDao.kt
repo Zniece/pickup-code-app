@@ -76,11 +76,19 @@ interface CodeHistoryDao {
     suspend fun countDuplicateGroups(): Int
 }
 
-@Database(entities = [CodeHistory::class], version = 3, exportSchema = false)
+@Database(entities = [CodeHistory::class], version = 4, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun codeHistoryDao(): CodeHistoryDao
 
     companion object {
+        /** 3 → 4：新增分享来源两个字段。用 ALTER 保留既有历史数据（避免升级清空取件记录）。 */
+        private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE code_history ADD COLUMN shareSourcePkg TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE code_history ADD COLUMN shareSourceName TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -91,7 +99,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "pickup_code_db"
                 )
-                    .fallbackToDestructiveMigration() // 刻意选择：个人工具App历史版本多、无exportSchema，手写迁移风险更高；升级造成的历史数据清空由回收站/去重机制部分缓解。若未来需要保留数据，须先 exportSchema 并补 addMigrations。
+                    .addMigrations(MIGRATION_3_4)
+                    // 兜底迁移：无 exportSchema 时首轮迁移难以严格校验 schema，仍保留 destructive 作为最后的保险，
+                    // 避免未知后续版本导致无法升级卡死；已通过 addMigrations 保住 3→4 的数据。
+                    .fallbackToDestructiveMigration()
                     .build()
                     .also { INSTANCE = it }
             }
