@@ -3,12 +3,9 @@
 自动识别截屏或分享图片中的取餐码，取件码和券码，通知提醒 + 一键标记已取。
 
 <div align="center">
-  <img src="screenshots/Screenshot_20260801_194622.jpg" width="19%" alt="首页" />
-  <img src="screenshots/Screenshot_20260801_195124.jpg" width="19%" alt="历史记录" />
-  <img src="screenshots/Screenshot_20260801_195130.jpg" width="19%" alt="统计" />
-  <img src="screenshots/Screenshot_20260801_233928.jpg" width="19%" alt="设置" />
-  <img src="screenshots/Screenshot_20260801_195141.jpg" width="19%" alt="设置-更多" />
-  <img src="screenshots/Screenshot_20260801_195145.jpg" width="19%" alt="设置-AI" />
+  <img src="screenshots/Screenshot_20260802_234224.jpg" width="30%" alt="首页" />
+  <img src="screenshots/Screenshot_20260802_234235.jpg" width="30%" alt="统计" />
+  <img src="screenshots/Screenshot_20260802_234240.jpg" width="30%" alt="设置" />
 </div>
 
 ## 功能
