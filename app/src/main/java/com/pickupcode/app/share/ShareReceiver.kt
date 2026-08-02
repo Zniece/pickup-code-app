@@ -106,7 +106,13 @@ object ShareReceiver {
         // 3) EXTRA_REFERRER host
         if (pkg.isBlank()) {
             try {
-                val referrer = intent.getParcelableExtra(Intent.EXTRA_REFERRER, Uri::class.java)
+                // 带 Class 参数的重载仅 API 33+；老设备走旧重载，否则抛 NoSuchMethodError（LinkageError，catch 不到）
+                val referrer = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    intent.getParcelableExtra(Intent.EXTRA_REFERRER, Uri::class.java)
+                } else {
+                    @Suppress("DEPRECATION")
+                    intent.getParcelableExtra(Intent.EXTRA_REFERRER)
+                }
                 if (referrer != null && !referrer.host.isNullOrBlank()) pkg = referrer.host ?: ""
             } catch (_: Exception) {
             }
