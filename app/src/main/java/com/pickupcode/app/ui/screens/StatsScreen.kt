@@ -95,7 +95,10 @@ fun StatsScreen(onBack: () -> Unit) {
 
 @Composable
 private fun OverviewCard(stats: PatternStats) {
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
         Column(Modifier.padding(16.dp)) {
             Text("总览", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(12.dp))
@@ -136,7 +139,10 @@ private fun PatternBreakdownCard(stats: PatternStats) {
     if (patterns.isEmpty()) return
 
     val maxCount = patterns.maxOf { it.value }
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
         Column(Modifier.padding(16.dp)) {
             Text("模式分布", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -173,7 +179,10 @@ private fun SuggestionsCard(suggestions: List<PatternSuggestion>, onCleared: (Bo
     val scope = rememberCoroutineScope()
     var showClearDialog by remember { mutableStateOf(false) }
 
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
         Column(Modifier.padding(16.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("💡 模式建议", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
@@ -248,7 +257,10 @@ private fun SuggestionsCard(suggestions: List<PatternSuggestion>, onCleared: (Bo
 
 @Composable
 private fun EmptyStateMessage() {
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
         Column(Modifier.padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("暂无统计数据", style = MaterialTheme.typography.titleMedium)
             Spacer(Modifier.height(8.dp))
@@ -273,7 +285,10 @@ private fun patternLabel(id: String): String = when (id) {
 
 @Composable
 private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>) {
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
         Column(Modifier.padding(16.dp)) {
             Text("🧠 已学习规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text("系统自动从未识别样本中学习并应用的新正则", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
