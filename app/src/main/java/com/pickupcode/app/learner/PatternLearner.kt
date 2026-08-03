@@ -16,6 +16,33 @@ object PatternLearner {
     private const val MAX_UNMATCHED = 100
     private const val MIN_SUGGEST = 3
 
+    // 候选码段提取 — 从乱文本中抠出可能是码的孤立数字/字母数字+连字符段。
+    // 注意：原始字符串里用单反斜杠(\d/\b)，双反斜杠会匹配不到（正则双重转义 bug）。
+    // 不使用 \b 边界（对中文/OCR 混排文本不可靠），改用结构正则 + 前后否定断言。
+    private val SEG_CANDIDATE = Regex(
+        """[A-Za-z]?\d{1,2}-\d{1,2}-\d{3,6}|\d{3,6}-\d{3,6}|[A-Za-z]-\d{4,6}""",
+        RegexOption.IGNORE_CASE
+    )
+    // 纯数字候选：3-6 位，且前后不能是数字/字母（避免截断长订单号、电话等）
+    private val PURE_CANDIDATE = Regex("""(?<![\dA-Za-z])(\d{3,6})(?![\dA-Za-z])""")
+
+    // 候选排除上下文 — 避免价格/数量/时长/楼层/度量等干扰片段被喂入学习池
+    private val CANDIDATE_EXCLUDE_CTX = Regex(
+        """(?:\d+[元块]|\d+[份件个杯]|\d+[分钟]|\d+[号号楼栋]|""" +
+        """\d+[折]|\d+[毫升升]|x\d{1,2}\b|\d{8,})""",
+        RegexOption.IGNORE_CASE
+    )
+
+    /** 从一段 OCR 文本中提取候选码段。先找带连字符的完整码段，再退而求其次找孤立纯数字。 */
+    private fun extractCodeCandidates(text: String): List<String> {
+        val seg = SEG_CANDIDATE.find(text)
+        if (seg != null) {
+            val c = seg.value
+            if (c.length in 5..12) return listOf(c)
+        }
+        return PURE_CANDIDATE.findAll(text).map { it.groupValues[1] }.toList()
+    }
+
     data class PatternStats(
         val totalScans: Int,
         val attempts: Int,
@@ -120,9 +147,16 @@ object PatternLearner {
 
         val clustered = mutableMapOf<String, MutableList<String>>()
         for (s in samples) {
-            val tok = tokenize(s.optString("text", ""))
-            if (tok.length >= 2) {
-                clustered.getOrPut(tok) { mutableListOf() }.add(s.optString("text", ""))
+            val text = s.optString("text", "")
+            // 先抠候选码段，再对每个码段 tokenize 聚类 —— 不再对整句脏文本 tokenize
+            val candidates = extractCodeCandidates(text)
+            for (cand in candidates) {
+                // 排除上下文干扰（价格/数量/时长/楼层/度量等）
+                if (CANDIDATE_EXCLUDE_CTX.containsMatchIn(cand)) continue
+                val tok = tokenize(cand)
+                if (tok.length >= 1) {
+                    clustered.getOrPut(tok) { mutableListOf() }.add(cand)
+                }
             }
         }
 
@@ -145,6 +179,31 @@ object PatternLearner {
     fun clearUnmatched(context: Context) {
         val file = File(context.filesDir, "unmatched_samples.json")
         file.writeText("[]")
+    }
+
+    /**
+     * 将用户标记为「识别错」的原始文本送入学习池（unmatched_samples.json）。
+     * 这样 autoApply 会重新聚类该格式并生成更精确/更合理的规则，
+     * 让误报反馈真正变成自学习的输入信号（而非只记一个计数）。
+     * 样本带 source="user_incorrect" 以便与普通的 miss 样本区分。
+     */
+    fun recordIncorrectSample(context: Context, rawText: String) {
+        if (rawText.isBlank()) return
+        val file = File(context.filesDir, "unmatched_samples.json")
+        val arr = if (file.exists()) {
+            try { JSONArray(file.readText()) } catch (_: Exception) { JSONArray() }
+        } else JSONArray()
+
+        val snippet = rawText.take(300)
+        arr.put(JSONObject().apply {
+            put("text", snippet)
+            put("src", "user_incorrect")
+            put("ts", System.currentTimeMillis() / 1000)
+        })
+
+        // 与自然 miss 样本共用同一上限，避免无限膨胀
+        while (arr.length() > MAX_UNMATCHED) arr.remove(0)
+        file.writeText(arr.toString())
     }
 
     // ---------------------------------------------------------------
@@ -211,6 +270,10 @@ object PatternLearner {
             "d3" -> "3-digit code"
             "L1-d2-d3" -> "letter-digit-digit (A-1-234)"
             "L1-d1-d4" -> "letter-digit-4digit"
+            "d-d-d" -> "digit-dash-dash (1-2-3)"
+            "d-d-d4" -> "digit-dash-4digit (1-6-5020)"
+            "d-d-d5" -> "digit-dash-5digit"
+            "Ld-d-d4" -> "letter-digit-dash-4digit (A8-3-3315)"
             else -> tok
         }
     }

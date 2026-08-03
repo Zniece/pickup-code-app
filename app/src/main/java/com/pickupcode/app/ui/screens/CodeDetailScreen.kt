@@ -93,6 +93,8 @@ fun CodeDetailScreen(
                         PatternLearner.setCodeIncorrect(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
                             PatternLearner.recordCodeIncorrect(ctx, CodeExtractor.getPatternId(item.code))
+                            // 反馈闭环：把误报的原始文本送入学习池，让自学习重新聚类该格式
+                            PatternLearner.recordIncorrectSample(ctx, item.rawTextSnippet)
                         }
                     }
                 )
