@@ -7,31 +7,70 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
+/** 应用级单例 DataStore（对应文件 settings.preferences_pb，随 App 数据目录保存）。 */
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
 
+/**
+ * 全局设置集中管理（DataStore Preferences 封装）。
+ *
+ * 所有设置项的读写统一走本对象：读取用 [observe] 订阅 Flow（UI 组合期 collectAsState），
+ * 写入用对应的 setXxx 方法。Key 名与默认值在此单一维护，新增设置项需同步 [Settings] 与 [observe]。
+ *
+ * 安全说明：API Key（AI / 高德 / 快递100）以明文存于 DataStore。
+ * 对本地单机工具 App 可接受；若在意反编译泄露，可迁移到 EncryptedSharedPreferences
+ * （升级时需把旧明文值读入并写入加密存储，属架构级改动，暂缓）。
+ */
 object AppPreferences {
 
-    // 安全说明：API Key（AI / 高德 / 快递100）以明文存于 DataStore。
-    // 对本地单机工具 App 可接受；若在意反编译泄露，可迁移到 EncryptedSharedPreferences
-    // （升级时需把旧明文值读入并写入加密存储，属架构级改动，暂缓）。
-
+    /** 识别置信度阈值（默认 0.5）：低于阈值的正则结果不展示（AI 结果目前不过此阈值）。 */
     private val KEY_CONFIDENCE_THRESHOLD = floatPreferencesKey("confidence_threshold")
+
+    /** 是否识别取餐码（餐饮场景，如瑞幸 A12）。 */
     private val KEY_ENABLE_FOOD = booleanPreferencesKey("enable_food")
+
+    /** 是否识别取件码（快递场景，如丰巢 1-2-3456）。 */
     private val KEY_ENABLE_PARCEL = booleanPreferencesKey("enable_parcel")
+
+    /** 是否识别券码（二维码，走 ML Kit Barcode 解码，与取餐/取件码互斥）。 */
     private val KEY_ENABLE_COUPON = booleanPreferencesKey("enable_coupon")
+
+    /** 主题模式："system" 跟随系统 / "light" / "dark"（对应 Theme.kt 的三态）。 */
     private val KEY_DARK_MODE = stringPreferencesKey("dark_mode")
+
+    /** AI 识别 API Key（任意 OpenAI 兼容服务；明文存储，见类级安全说明）。 */
     private val KEY_API_KEY = stringPreferencesKey("api_key")
+
+    /** AI 识别 API Base URL（默认 OpenAI 官方，可换任意兼容服务）。 */
     private val KEY_API_BASE_URL = stringPreferencesKey("api_base_url")
+
+    /** AI 识别模型名（默认 gpt-4o-mini）。 */
     private val KEY_API_MODEL = stringPreferencesKey("api_model")
+
+    /** 是否启用 AI 增强识别（与正则并行，失败不影响主流程）。 */
     private val KEY_ENABLE_AI = booleanPreferencesKey("enable_ai")
+
+    /** 是否接收外部分享（ACTION_SEND：分享面板入口）。 */
     private val KEY_ENABLE_INTENT_RECEIVE = booleanPreferencesKey("enable_intent_receive")
+
+    /** 是否响应文字分享检测（ACTION_PROCESS_TEXT：长按选中文字路径）。 */
     private val KEY_ENABLE_SHARE_DETECTION = booleanPreferencesKey("enable_share_detection")
+
+    /** 是否启用地图地址验证（Android Geocoder + 高德，配 amap key 可提精度）。 */
     private val KEY_ENABLE_MAP_VERIFY = booleanPreferencesKey("enable_map_verify")
+
+    /** 高德 API Key（可选，仅提升地址验证精度；明文存储）。 */
     private val KEY_AMAP_API_KEY = stringPreferencesKey("amap_api_key")
+
+    /** 是否启用快递100 反向验证（运单号查取件码/地址，校验 OCR 结果）。 */
     private val KEY_ENABLE_KUAIDI100 = booleanPreferencesKey("enable_kuaidi100")
+
+    /** 快递100 开放平台 API Key（明文存储）。 */
     private val KEY_KUAIDI100_KEY = stringPreferencesKey("kuaidi100_key")
+
+    /** 是否隐藏主页的无障碍服务引导卡片（首次设置完成后可关）。 */
     private val KEY_HIDE_ACCESSIBILITY_CARD = booleanPreferencesKey("hide_accessibility_card")
 
+    /** 全部设置项的聚合快照：observe 的每次发射即一个不可变副本。 */
     data class Settings(
         val confidenceThreshold: Float = 0.5f,
         val enableFoodCodes: Boolean = true,
@@ -51,6 +90,7 @@ object AppPreferences {
         val hideAccessibilityCard: Boolean = false
     )
 
+    /** 订阅设置 Flow：任一 key 变化即发射新的 [Settings] 快照；UI 侧用 collectAsState 消费。 */
     fun observe(context: Context): Flow<Settings> {
         return context.dataStore.data.map { prefs ->
             Settings(
