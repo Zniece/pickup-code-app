@@ -3,6 +3,7 @@ package com.pickupcode.app.ui.screens
 import android.content.Intent
 import android.util.Log
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -214,8 +215,32 @@ fun CodeDetailScreen(
                     }
                 }
                 if (showFullscreen) {
-                    AlertDialog(onDismissRequest = { showFullscreen = false }, confirmButton = { TextButton(onClick = { showFullscreen = false }) { Text("关闭") } },
-                        text = { bitmap?.let { bmp -> Image(bitmap = bmp.asImageBitmap(), contentDescription = "截屏全屏", modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth) } })
+                    // 无边框全屏预览：黑底 + 完整图片（含长宽比）居中，点任意处关闭
+                    androidx.compose.ui.window.Dialog(
+                        onDismissRequest = { showFullscreen = false },
+                        properties = androidx.compose.ui.window.DialogProperties(
+                            dismissOnBackPress = true,
+                            dismissOnClickOutside = true,
+                            usePlatformDefaultWidth = false  // 铺满全屏，去掉 AlertDialog 的默认宽度限制与卡片边框
+                        )
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black)
+                                .clickable { showFullscreen = false },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            bitmap?.let { bmp ->
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "截屏全屏",
+                                    modifier = Modifier.fillMaxSize().padding(12.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
