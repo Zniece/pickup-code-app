@@ -364,13 +364,13 @@ object ShareReceiver {
                             amapApiKey = settings.amapApiKey.ifBlank { null }
                         )
                         if (geoResult.verified) {
-                            // 基于最新记录更新 geo 字段（记录已由上面 update/insert 写入）
+                            // M1: 定向更新 geo 字段，不动 code/address 等其他字段，避免覆盖用户编辑
                             db.codeHistoryDao().findByCodeAndType(result.code, result.type.name)?.let { rec ->
-                                db.codeHistoryDao().update(rec.copy(
-                                    geoVerified = true,
-                                    geoConfidence = geoResult.confidence,
-                                    geoFormattedAddress = geoResult.formattedAddress ?: ""
-                                ))
+                                db.codeHistoryDao().updateGeo(
+                                    rec.id, true,
+                                    geoResult.confidence,
+                                    geoResult.formattedAddress ?: ""
+                                )
                             }
                             Log.d(TAG, "Geo verify OK: $address -> ${geoResult.formattedAddress} (${geoResult.confidence})")
                         } else {
