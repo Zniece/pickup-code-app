@@ -325,31 +325,6 @@ object PatternLearner {
         return excludes.any { ex -> code.contains(ex, ignoreCase = true) }
     }
 
-    /**
-     * 将用户标记为「识别错」的原始文本送入学习池（unmatched_samples.json）。
-     * 这样 autoApply 会重新聚类该格式并生成更精确/更合理的规则，
-     * 让误报反馈真正变成自学习的输入信号（而非只记一个计数）。
-     * 样本带 source="user_incorrect" 以便与普通的 miss 样本区分。
-     */
-    fun recordIncorrectSample(context: Context, rawText: String) {
-        if (rawText.isBlank()) return
-        val file = File(context.filesDir, "unmatched_samples.json")
-        val arr = if (file.exists()) {
-            try { JSONArray(file.readText()) } catch (_: Exception) { JSONArray() }
-        } else JSONArray()
-
-        val snippet = rawText.take(300)
-        arr.put(JSONObject().apply {
-            put("text", snippet)
-            put("src", "user_incorrect")
-            put("ts", System.currentTimeMillis() / 1000)
-        })
-
-        // 与自然 miss 样本共用同一上限，避免无限膨胀
-        while (arr.length() > MAX_UNMATCHED) arr.remove(0)
-        file.writeText(arr.toString())
-    }
-
     // ---------------------------------------------------------------
     // Tokenize: string -> character-class pattern
     // ---------------------------------------------------------------
@@ -466,24 +441,29 @@ object PatternLearner {
     // Unmatched sample storage (JSON file, max 100 entries)
     // ---------------------------------------------------------------
 
+    // 对 JSON 样本文件的写操作统一加锁，避免并发 read-modify-write 竞态导致丢失样本
+    private val unmatchedLock = Any()
+
     private fun appendUnmatched(context: Context, rawText: String, source: String = "unknown") {
         if (rawText.isBlank()) return
-        val file = File(context.filesDir, "unmatched_samples.json")
-        val arr = if (file.exists()) {
-            try { JSONArray(file.readText()) } catch (_: Exception) { JSONArray() }
-        } else JSONArray()
+        synchronized(unmatchedLock) {
+            val file = File(context.filesDir, "unmatched_samples.json")
+            val arr = if (file.exists()) {
+                try { JSONArray(file.readText()) } catch (_: Exception) { JSONArray() }
+            } else JSONArray()
 
-        // Keep only recent + relevant text
-        val snippet = rawText.take(300)
-        arr.put(JSONObject().apply {
-            put("text", snippet)
-            put("src", source)          // B1: 样本来源打标
-            put("ts", System.currentTimeMillis() / 1000)
-        })
+            // Keep only recent + relevant text
+            val snippet = rawText.take(300)
+            arr.put(JSONObject().apply {
+                put("text", snippet)
+                put("src", source)          // B1: 样本来源打标
+                put("ts", System.currentTimeMillis() / 1000)
+            })
 
-        // Trim to max
-        while (arr.length() > MAX_UNMATCHED) arr.remove(0)
-        file.writeText(arr.toString())
+            // Trim to max
+            while (arr.length() > MAX_UNMATCHED) arr.remove(0)
+            file.writeText(arr.toString())
+        }
     }
 
     private fun loadUnmatched(context: Context): List<JSONObject> {
@@ -575,6 +555,7 @@ object PatternLearner {
     /** B3: 多少毫秒未使用视为"衰减"，自动降级为可选规则（默认 21 天）。 */
     private const val DECAY_MS = 21L * 24 * 60 * 60 * 1000
     private const val AUTP_APPLY_THROTTLE_MS = 6L * 60 * 60 * 1000 // 6h
+    private const val TOUCH_THROTTLE_MS = 60L * 1000 // B3 touch 节流：1 分钟内不重复全量写盘
 
     /** A1: 停用/启用某条已学规则。 */
     fun setRuleEnabled(context: Context, regex: String, enabled: Boolean) {
@@ -589,10 +570,17 @@ object PatternLearner {
         saveLearnedPatterns(context, getLearnedPatterns(context).filterNot { it.regex == regex })
     }
 
-    /** B3: 一条规则被识别命中时调用，更新 lastUsedAt 并解除衰减降级。 */
+    /** B3: 一条规则被识别命中时调用，更新 lastUsedAt 并解除衰减降级。
+     *  节流：距上次 touch 该规则 < 阈值则跳过，避免识别主循环每次命中都全量重写 learned_rules。 */
     fun touchRule(context: Context, regex: String) {
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val stampKey = "touch_" + regex.hashCode()
+        val now = System.currentTimeMillis()
+        val last = prefs.getLong(stampKey, 0L)
+        if (now - last < TOUCH_THROTTLE_MS) return
+        prefs.edit().putLong(stampKey, now).apply()
         val rules = getLearnedPatterns(context).map {
-            if (it.regex == regex) it.copy(lastUsedAt = System.currentTimeMillis(), decayed = false) else it
+            if (it.regex == regex) it.copy(lastUsedAt = now, decayed = false) else it
         }
         saveLearnedPatterns(context, rules)
     }

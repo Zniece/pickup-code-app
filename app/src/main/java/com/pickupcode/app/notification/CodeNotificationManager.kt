@@ -161,7 +161,8 @@ object CodeNotificationManager {
                 .setContentIntent(pendingIntent)
                 .build()
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
-            manager.notify(safeId(type, code) and 0x7fffffff, notification)
+            // 用独立 ID 空间，避免覆盖同码原始通知
+            manager.notify((safeId(type, code) and 0x7fffffff) or 0x40000000, notification)
         } catch (_: Exception) { }
     }
 

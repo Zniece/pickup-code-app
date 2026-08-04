@@ -327,15 +327,16 @@ private fun HitRateCard(stats: List<PatternLearner.DayStat>) {
                     val padB = 18.dp.toPx()
                     val padT = 8.dp.toPx()
                     val plotH = h - padB - padT
-                    val maxTotal = stats.maxOf { it.total }.coerceAtLeast(1)
+                    val maxRate = stats.mapNotNull { if (it.total > 0) it.hits.toFloat() / it.total else null }
+                        .maxOrNull()?.coerceAtLeast(0.01f) ?: 0.01f
                     val n = stats.size
                     // 画水平网格线 + 基线
                     drawLine(gridColor, androidx.compose.ui.geometry.Offset(0f, h - padB), androidx.compose.ui.geometry.Offset(w, h - padB), strokeWidth = 1.dp.toPx())
-                    // 逐点画命中率折线（x = index 均分，y = 命中率相对最高总量的比例）
+                    // 逐点画命中率折线（y = 每日命中率，相对最高命中率归一化）
                     val points = stats.mapIndexed { i, s ->
                         val x = if (n == 1) w / 2f else w * i / (n - 1).toFloat()
                         val rate = if (s.total > 0) s.hits.toFloat() / s.total else 0f
-                        val normalized = if (maxTotal > 0) s.total.toFloat() / maxTotal else 0f
+                        val normalized = (rate / maxRate)
                         androidx.compose.ui.geometry.Offset(x, h - padB - plotH * normalized)
                     }
                     for (i in 1 until points.size) {

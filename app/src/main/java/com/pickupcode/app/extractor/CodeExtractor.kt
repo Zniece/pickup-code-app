@@ -193,7 +193,7 @@ object CodeExtractor {
 
         data class Rule(val regex: Regex, val type: CodeType, val baseScore: Float,
                         val ctxBonus: Float = 0f, val sizeBonus: Boolean = false, val pureNum: Boolean = false,
-                        val minMatchLen: Int = 0)
+                        val minMatchLen: Int = 0, val isLearned: Boolean = false)
 
         // 凭条号句式（凭1-6-5020到...取）：菜鸟驿站/快递柜典型通知，优先且绕过 food 上下文干扰
         for (line in lines) {
@@ -226,14 +226,15 @@ object CodeExtractor {
         if (context != null) {
             val learned = com.pickupcode.app.learner.PatternLearner.getLearnedPatterns(context)
             for (rule in learned) {
-                // A1: 用户停用的规则不再参与识别；B3: 衰减降级的规则也不再强制应用
-                if (!rule.enabled || rule.decayed) continue
+                // A1: 用户手动停用的规则不再参与识别
+                if (!rule.enabled) continue
                 try {
                     val regex = Regex(rule.regex)
                     val type = if (rule.type == "pickup_food") CodeType.pickup_food else CodeType.pickup_parcel
-                    // Auto-learned patterns are lower confidence: require the match to be >= 3 chars
-                    // to avoid over-broad learned rules matching 2-char noise like X1 / A1.
-                    rules.add(Rule(regex, type, 65f, 10f, minMatchLen = 3))
+                    // 已学规则基础分低；B3: 若已衰减(超期未用)则进一步压到极低分，仍参与但不抢先，
+                    // 若后续真实被用到会经 touchRule 解除衰减 —— 让衰减可自愈，而非单向永久弃用。
+                    val base = if (rule.decayed) 20f else 65f
+                    rules.add(Rule(regex, type, base, 10f, minMatchLen = 3, isLearned = true))
                     regexToLearned[regex.pattern] = rule.regex
                 } catch (_: Exception) { /* skip invalid regex */ }
             }
@@ -269,8 +270,8 @@ object CodeExtractor {
                     val conflict = when (rule.type) { CodeType.pickup_food -> isParcelContext && !isFoodContext; CodeType.pickup_parcel -> isFoodContext && !isParcelContext; CodeType.coupon -> false }
                     if (conflict) s -= 8f
 
-                    // B3: 命中已学规则 → 刷新其 lastUsedAt 并解除衰减（用于"这条规则最近还被用到吗"衰减机制）
-                    if (context != null && rule.baseScore == 65f && m.value.length >= 3) {
+                    // B3: 命中已学规则 → 刷新其 lastUsedAt 并解除衰减（用 isLearned 标识，比 baseScore 判等更稳）
+                    if (context != null && rule.isLearned && m.value.length >= 3) {
                         regexToLearned[rule.regex.pattern]?.let { r ->
                             PatternLearner.touchRule(context, r)
                         }

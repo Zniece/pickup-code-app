@@ -93,9 +93,8 @@ fun CodeDetailScreen(
                         PatternLearner.setCodeIncorrect(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
                             PatternLearner.recordCodeIncorrect(ctx, CodeExtractor.getPatternId(item.code))
-                            // 反馈闭环：把误报的原始文本送入学习池，让自学习重新聚类该格式
-                            PatternLearner.recordIncorrectSample(ctx, item.rawTextSnippet)
-                            // A3: 该码值加入可学习排除，之后识别不再把它当取件码
+                            // A3: 该码值加入可学习排除，之后识别不再把它当取件码。
+                            // 注意：不把误报文本喂入学习池(unmatched_samples)——否则会学生出与"排除"矛盾的新规则。
                             PatternLearner.addExclude(ctx, item.code)
                         }
                     }
@@ -141,13 +140,16 @@ fun CodeDetailScreen(
                         }
                     })
 
-                // C2: 常用取件点提示
-                val freqPoint = remember(item.pickupAddress) { PatternLearner.isFrequentPickupPoint(ctx, item.pickupAddress) }
-                if (freqPoint != null) {
+                // C2: 常用取件点提示（IO 线程查，避免组合期主线程解析 JSON）
+                val freqPoint by produceState<PatternLearner.PickupPoint?>(null, item.pickupAddress) {
+                    value = withContext(Dispatchers.IO) { PatternLearner.isFrequentPickupPoint(ctx, item.pickupAddress) }
+                }
+                val freq = freqPoint  // 捕获局部值，便于智能转换
+                if (freq != null) {
                     Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         AssistChip(
                             onClick = {},
-                            label = { Text("🏠 常用取件点 · 已取 ${freqPoint.count} 次", style = MaterialTheme.typography.labelSmall) },
+                            label = { Text("🏠 常用取件点 · 已取 ${freq.count} 次", style = MaterialTheme.typography.labelSmall) },
                             colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
                         )
                     }
@@ -249,8 +251,10 @@ fun CodeDetailScreen(
                 if (onMarkDone != null) {
                     Button(onClick = {
                         confirmAll()
-                        // C2: 标记已取时把取件地址登记为常用取件点
-                        if (item.pickupAddress.isNotBlank()) PatternLearner.registerPickupPoint(ctx, item.pickupAddress)
+                        // C2: 标记已取时把取件地址登记为常用取件点（IO 线程写盘，避免主线程同步 IO）
+                        if (item.pickupAddress.isNotBlank()) {
+                            scope.launch(Dispatchers.IO) { PatternLearner.registerPickupPoint(ctx, item.pickupAddress) }
+                        }
                         onMarkDone(item.id)
                     }, modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8DC0E0), contentColor = Color.White)) {
