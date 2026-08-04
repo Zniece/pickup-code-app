@@ -201,7 +201,8 @@ fun CodeDetailScreen(
             var showFullscreen by remember { mutableStateOf(false) }
             if (item.screenshotPath.isNotBlank() && File(item.screenshotPath).exists()) {
                 var bitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-                LaunchedEffect(item.screenshotPath) { bitmap = withContext(Dispatchers.IO) { BitmapFactory.decodeFile(item.screenshotPath) } }
+                // M3: 大图降采样解码，避免 4K 截图 BitmapFactory.decodeFile 直接 OOM
+                LaunchedEffect(item.screenshotPath) { bitmap = withContext(Dispatchers.IO) { decodeSampledBitmap(item.screenshotPath, 1600) } }
                 // 不手动 recycle：Compose 的 Bitmap.asImageBitmap() 与状态共享受管理时，手动 recycle 可能造成
                 // 「已回收位图仍在绘制」崩溃（Canvas 绘制期 native 已释放）。交由 GC/Compose 生命周期管理。
                 Card(Modifier.fillMaxWidth().clickable { showFullscreen = true },
@@ -378,11 +379,30 @@ private fun formatTimestamp(epochMillis: Long): String {
 private fun launchNavigation(context: android.content.Context, address: String) {
     if (address.isBlank()) return
     try {
-        val encoded = android.net.Uri.encode(address, ",，。. ")
+        val encoded = android.net.Uri.encode(address, ",，，。. ")
         val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse("geo:0,0?q=$encoded"))
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     } catch (e: Exception) {
         Log.w("CodeDetail", "唤起导航失败: ${e.message}")
+    }
+}
+
+/** M3: 大图降采样解码（目标最长边 maxDim px，取 2 的幂采样），避免位图 OOM。 */
+private fun decodeSampledBitmap(path: String, maxDim: Int): android.graphics.Bitmap? {
+    return try {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(path, bounds)
+        var sample = 1
+        var w = bounds.outWidth
+        var h = bounds.outHeight
+        while (w / 2 >= maxDim || h / 2 >= maxDim) { w /= 2; h /= 2; sample *= 2 }
+        val opts = BitmapFactory.Options().apply {
+            inSampleSize = sample
+            inPreferredConfig = android.graphics.Bitmap.Config.ARGB_8888
+        }
+        BitmapFactory.decodeFile(path, opts)
+    } catch (_: Exception) {
+        null
     }
 }

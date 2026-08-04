@@ -66,6 +66,7 @@ import com.pickupcode.app.ui.screens.StatsScreen
 import com.pickupcode.app.ui.theme.PickupCodeTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -485,14 +486,20 @@ fun MainScreen(
                         onDelete = {
                             scope.launch(Dispatchers.IO) {
                                 db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
-                                val snackbarResult = snackbarHostState.showSnackbar(message = "已移至回收站，24小时后自动删除", actionLabel = "撤销", duration = SnackbarDuration.Short)
+                                // M14: showSnackbar 是 Compose 状态操作，须回主线程调用（DB 留在 IO）
+                                val snackbarResult = withContext(Dispatchers.Main) {
+                                    snackbarHostState.showSnackbar(message = "已移至回收站，24小时后自动删除", actionLabel = "撤销", duration = SnackbarDuration.Short)
+                                }
                                 if (snackbarResult == SnackbarResult.ActionPerformed) { db.codeHistoryDao().restore(item.id) }
                             }
                         },
                         onDone = {
                             scope.launch(Dispatchers.IO) {
                                 db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
-                                val snackbarResult = snackbarHostState.showSnackbar(message = "已移至回收站，24小时后自动删除", actionLabel = "撤销", duration = SnackbarDuration.Short)
+                                // M14: showSnackbar 是 Compose 状态操作，须回主线程调用（DB 留在 IO）
+                                val snackbarResult = withContext(Dispatchers.Main) {
+                                    snackbarHostState.showSnackbar(message = "已移至回收站，24小时后自动删除", actionLabel = "撤销", duration = SnackbarDuration.Short)
+                                }
                                 if (snackbarResult == SnackbarResult.ActionPerformed) { db.codeHistoryDao().restore(item.id) }
                             }
                         },
