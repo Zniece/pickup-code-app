@@ -384,8 +384,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             val db = AppDatabase.getInstance(this@PickupCodeAccessibilityService)
             val dao = db.codeHistoryDao()
 
-            // H6: 事务内原子化去重保存（查重+插入/更新），避免与分享/手动并发产生重复行
-            val save = dao.saveOrUpdate(CodeHistory(
+            // 原始去重语义：找重后照常新增，让同一码多次保存产生多行，进「重复值整理」手动整理
+            val save = dao.insertCheckDuplicate(CodeHistory(
                 code = code, type = type.name,
                 source = source,
                 screenshotPath = screenshotPath,

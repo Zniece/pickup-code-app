@@ -38,6 +38,9 @@ object CodeExtractor {
     private val ADDR_PLACED = Regex("(?:已放至|已暂存至|已放入|送达)\\s*([^，,。.\\n]{4,80})")
     private val CABINET_NUM = Regex("(\\d+)号柜")
     private val PAREN_ADDR = Regex("\\uFF08([^\\uFF09]*[路街段柜])\\uFF09")
+
+    // 营销横幅/优惠标签词——出现这些词的片段不是店名/站名（如【新店福利】、满减、优惠券）
+    private val PROMO_LABEL_WORDS = listOf("福利", "优惠", "满减", "红包", "立减", "折扣", "特惠", "会员")
     private val PING_NOISE_TRAIL = Regex("凭\\s*[A-Za-z0-9\\-]+\\s*$")
     // 跨行前缀：上一行是取件码/凭条等词 + 下一行开头是码（后接地址/通知等）；去掉行尾$锚点，
     // 否则"231607 到育新路..."这类码后跟真实地址的会被漏抓（需保留开头强锚定 + 后不能紧邻数字/破折号）
@@ -425,6 +428,8 @@ object CodeExtractor {
         val goodBracket = bracketMatches.firstOrNull { content ->
             // 跳过包含手机号/运单号等数字的括号
             if (content.any { it.isDigit() }) return@firstOrNull false
+            // 跳过优惠/福利/券类营销横幅（如【新店福利】是“新店优惠”标签，不是店名/站名）
+            if (PROMO_LABEL_WORDS.any { content.contains(it) }) return@firstOrNull false
             STATION_TYPE_MAP.keys.any { content.contains(it) } ||
                 ADDR_PIPE_FULL.containsMatchIn(content) ||
                 ADDR_LANDMARK.containsMatchIn(content) ||
@@ -891,8 +896,13 @@ object CodeExtractor {
     // ---------------------------------------------------------------
 
     private fun extractStationName(text: String): String {
-        // Try 【】 first
-        BRACKET_BRAND.find(text)?.let { return stripBrackets(it.groupValues[1].trim()) }
+        // Try 【】 first (skip promo/voucher labels like 【新店福利】)
+        BRACKET_BRAND.findAll(text).forEach { m ->
+            val c = m.groupValues[1].trim()
+            if (c.any { it.isDigit() }) return@forEach
+            if (PROMO_LABEL_WORDS.any { c.contains(it) }) return@forEach
+            return stripBrackets(c)
+        }
         // Try known station keywords
         for (kw in STATION_TYPE_MAP.keys) {
             if (text.contains(kw)) {
@@ -904,6 +914,11 @@ object CodeExtractor {
                 val name = text.substring(start, end).trim()
                 if (name.length in 2..16) return name
             }
+        }
+        // 放宽：形如 X超市 / X便利店 / X商行 的店名（如 鮮佰汇超市）也当站点/收货点
+        Regex("(?<![元券])[\\u4e00-\\u9fffA-Za-z0-9]{1,8}?(超市|便利店|商行)").find(text)?.let { m ->
+            val name = m.groupValues[0].trim()
+            if (name.length in 2..12 && PROMO_LABEL_WORDS.none { name.contains(it) }) return name
         }
         return ""
     }
@@ -980,13 +995,21 @@ object CodeExtractor {
         val t = stripBrackets(s)
         if (t.length !in 4..80 || t.none { it in '\u4e00'..'\u9fff' }) return false
         // Must contain address indicators (road/street/building/cabinet etc)
-        if (!t.contains(ADDR_PIPE_FULL) && !t.contains(ADDR_LANDMARK)) return false
+        // 「元」会与货币/金额冲突（如 累计省4元>、¥9.9元、实付¥8.90）——只有 单元/几单元 里的 元 才算地址指示符
+        val pipeChars = ADDR_PIPE_FULL.findAll(t).map { it.value }.toList()
+        val hasStreet = pipeChars.isNotEmpty() || ADDR_LANDMARK.containsMatchIn(t)
+        val bareYuanOnly = pipeChars.isNotEmpty() && pipeChars.all { it == "元" } && !t.contains("单元")
+        if (!hasStreet || bareYuanOnly) return false
         // Exclude non-address strings that happen to contain a "号" indicator (e.g. 运单尾号)
         if (listOf("取运单", "运单尾号", "运单", "包裹", "删除").any { t.contains(it) }) return false
         // Exclude pickup-code prefix noise (e.g. OUCR 把「取件码」拆成 件码 紧跟码值，如 件码067865到…)
         if (listOf("件码", "取件码", "取货码", "提取码", "取餐码", "取单码").any { t.contains(it) }) return false
         // Exclude 运单号/单号 标签（如 OCR 误写的 快谨单号）——不是取件地址
         if (t.endsWith("单号") || listOf("运单号", "订单号", "快运单号", "快递单号").any { t.contains(it) }) return false
+        // Exclude 订单/交易/UI 界面标签（如 OCR 把「订单详情」读成 订单详惰、交易快照、券号/券码等）——不是取件地址
+        if (listOf("订单", "交易", "快照", "详惰", "详情页", "商品", "规格", "小计", "合计", "数量", "券码", "券号").any { t.contains(it) }) return false
+        // OCR 把「详情/快照」等标签的字读错（详惰/快照）概率高，真实地址几乎不会以「详/惰」作实义词——单独拦以开头为详的标签串
+        if (t.startsWith("详惰") || t.startsWith("订单")) return false
         // Exclude 隐私号/虚拟号/联系电话 等通知文案（带 **** 脱敏的手机信息），不是取件地址
         if (listOf("号码保护", "虚拟号码", "联系电话", "手机号", "客服电话", "已通过虚拟号码发货").any { t.contains(it) }) return false
         if (t.contains("****")) return false

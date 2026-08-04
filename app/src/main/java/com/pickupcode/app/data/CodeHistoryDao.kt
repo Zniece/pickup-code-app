@@ -106,6 +106,18 @@ interface CodeHistoryDao {
             SaveResult(insert(history), false)
         }
     }
+
+    /**
+     * 原始去重语义（v1.0.4）：查重但照常新增，让同一 code 多次保存真实产生多行，
+     * 由「重复值整理」入口手动保留/删除。existed=是否已存在同 code+type（用于提示重复），
+     * 但每次都会 insert 新行（不再像 saveOrUpdate 那样合并成一行）。
+     */
+    @Transaction
+    suspend fun insertCheckDuplicate(history: CodeHistory): SaveResult {
+        val existing = findByCodeAndType(history.code, history.type)
+        val id = insert(history)
+        return SaveResult(id, existing != null)
+    }
 }
 
 @Database(entities = [CodeHistory::class], version = 4, exportSchema = false)

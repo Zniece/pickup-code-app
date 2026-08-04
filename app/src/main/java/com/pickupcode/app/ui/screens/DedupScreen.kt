@@ -87,7 +87,10 @@ private fun DuplicateGroupCard(entries: List<CodeHistory>, onChanged: () -> Unit
     val code = entries.first().code
     val type = entries.first().type
 
-    Card(Modifier.fillMaxWidth()) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
         Column(Modifier.padding(16.dp)) {
             val icon = when (type) {
                 "pickup_food" -> "🥤"

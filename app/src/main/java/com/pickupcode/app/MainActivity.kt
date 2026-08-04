@@ -221,7 +221,7 @@ class MainActivity : ComponentActivity() {
                 "pickup_parcel" -> CodeExtractor.CodeType.pickup_parcel
                 else -> CodeExtractor.CodeType.pickup_food // 手动录入只支持取餐/取件；默认取餐
             }
-            db.codeHistoryDao().saveOrUpdate(
+            db.codeHistoryDao().insertCheckDuplicate(
                 CodeHistory(
                     code = code,
                     type = type,

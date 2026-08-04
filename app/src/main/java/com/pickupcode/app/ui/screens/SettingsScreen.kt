@@ -128,6 +128,21 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             }
             item { HorizontalDivider() }
 
+            // 外观：跟随系统 / 浅色 / 深色（恢复自 v1.0.0 的主题切换入口；后端 AppPreferences.darkMode + Theme.kt 三态逻辑仍在）
+            item { Text("外观", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item {
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    listOf("system" to "跟随系统", "light" to "浅色", "dark" to "深色").forEachIndexed { i, (v, l) ->
+                        SegmentedButton(
+                            selected = s.darkMode == v,
+                            onClick = { scope.launch(Dispatchers.IO) { AppPreferences.setDarkMode(ctx, v) } },
+                            shape = SegmentedButtonDefaults.itemShape(i, 3)
+                        ) { Text(l) }
+                    }
+                }
+            }
+            item { HorizontalDivider() }
+
             item { Text("关于", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { Column { Text("一键闪记 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
                 Text("基于 ML Kit OCR · 数据仅存储在本地", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
