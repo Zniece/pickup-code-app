@@ -39,7 +39,9 @@ object CodeExtractor {
     private val CABINET_NUM = Regex("(\\d+)号柜")
     private val PAREN_ADDR = Regex("\\uFF08([^\\uFF09]*[路街段柜])\\uFF09")
     private val PING_NOISE_TRAIL = Regex("凭\\s*[A-Za-z0-9\\-]+\\s*$")
-    private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*$")
+    // 跨行前缀：上一行是取件码/凭条等词 + 下一行开头是码（后接地址/通知等）；去掉行尾$锚点，
+    // 否则"231607 到育新路..."这类码后跟真实地址的会被漏抓（需保留开头强锚定 + 后不能紧邻数字/破折号）
+    private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*(?![-\\d])")
     private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号|驿站|快递柜|自提柜|取件点)")
     private val ORDER_LONG_SQL = Regex("\\b\\d{6,}-\\d{5,}\\b")
     private val ORDER_SHORT_SQL = Regex("\\b\\d{2,4}-\\d{3,4}-\\d{4,}\\b")
@@ -162,7 +164,7 @@ object CodeExtractor {
                     val p = m.groupValues[1]
                     candidates.add(Candidate(code,
                         if (p.contains("餐") || p.contains("单")) CodeType.pickup_food else CodeType.pickup_parcel,
-                        SCORE_PREFIXED, sourceFromLine(line, p, lines, allText)))
+                        SCORE_PREFIXED, sourceFromLine(line, p, lines, allText), strong = true))
                 }
             }
             // 跨行：OCR 常把「取件码/凭取」拆成两行（如 上一行结尾「取」+ 本行「件码067865」）
@@ -177,7 +179,7 @@ object CodeExtractor {
                             val p = m.groupValues[1]
                             candidates.add(Candidate(code,
                                 if (p.contains("餐") || p.contains("单")) CodeType.pickup_food else CodeType.pickup_parcel,
-                                SCORE_PREFIXED, sourceFromLine(line, p, lines, allText)))
+                                SCORE_PREFIXED, sourceFromLine(line, p, lines, allText), strong = true))
                         }
                     }
                 }
@@ -195,14 +197,14 @@ object CodeExtractor {
                     val isFood = lines[i].text.contains("餐") || lines[i].text.contains("单")
                     candidates.add(Candidate(code,
                         if (isFood) CodeType.pickup_food else CodeType.pickup_parcel,
-                        SCORE_PREFIXED, sourceFromLine(lines[i], if (isFood) "取餐码" else "取件码", lines, allText)))
+                        SCORE_PREFIXED, sourceFromLine(lines[i], if (isFood) "取餐码" else "取件码", lines, allText), strong = true))
                 }
             }
         }
 
         data class Rule(val regex: Regex, val type: CodeType, val baseScore: Float,
                         val ctxBonus: Float = 0f, val sizeBonus: Boolean = false, val pureNum: Boolean = false,
-                        val minMatchLen: Int = 0, val isLearned: Boolean = false)
+                        val minMatchLen: Int = 0, val isLearned: Boolean = false, val strong: Boolean = false)
 
         // 凭条号句式（凭1-6-5020到...取）：菜鸟驿站/快递柜典型通知，优先且绕过 food 上下文干扰
         for (line in lines) {
@@ -213,17 +215,17 @@ object CodeExtractor {
                 if (PARCEL_KEYWORDS.any { line.text.contains(it) }) s += PING_PARCEL_BONUS
                 if (THREE_SEGMENT_PARCEL.matches(code) || FOUR_SEGMENT_PARCEL.matches(code)) s += PING_MULTISEG_BONUS
                 candidates.add(Candidate(code, CodeType.pickup_parcel, s,
-                    sourceFromLine(line, "凭条号", lines, allText)))
+                    sourceFromLine(line, "凭条号", lines, allText), strong = true))
             }
         }
 
         val rules = mutableListOf(
-            Rule(THREE_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG),
-            Rule(FOUR_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_FOUR_SEG),
-            Rule(LETTER_TWO_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_TWO_SEG),
-            Rule(LETTER_DASH_FIVE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_FIVE),
-            Rule(LETTER_THREE_SEG_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG),
-            Rule(LETTER_DASH_THREE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_THREE),
+            Rule(THREE_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG, strong = true),
+            Rule(FOUR_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_FOUR_SEG, strong = true),
+            Rule(LETTER_TWO_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_TWO_SEG, strong = true),
+            Rule(LETTER_DASH_FIVE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_FIVE, strong = true),
+            Rule(LETTER_THREE_SEG_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG, strong = true),
+            Rule(LETTER_DASH_THREE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_THREE, strong = true),
             Rule(LONG_NUMBER_PARCEL, CodeType.pickup_parcel, SCORE_LONG_NUM_PARCEL, 10f),
             Rule(LETTER_NUMBER_FOOD, CodeType.pickup_food, SCORE_LETTER_NUM_FOOD, 10f, true),
             Rule(PURE_NUMBER_FOOD, CodeType.pickup_food, SCORE_PURE_NUM_FOOD, 10f, true, true)
@@ -287,7 +289,7 @@ object CodeExtractor {
                     }
 
                     candidates.add(Candidate(m.value, rule.type, s, sourceFromLine(line,
-                        if (rule.type == CodeType.pickup_food) "food" else "parcel", lines, allText)))
+                        if (rule.type == CodeType.pickup_food) "food" else "parcel", lines, allText), strong = rule.strong))
                 }
             }
         }
@@ -341,7 +343,9 @@ object CodeExtractor {
         val top = candidates.firstOrNull()?.score ?: 0f
         for (c in candidates) {
             if (c.code in seen) continue; seen.add(c.code)
-            if (c.score >= top * 0.75f)
+            // 修复多通知同屏漏识别：强上下文证据码(PREFIXED/凭条/段式)不过 top×0.75 阈值，
+            // 只对无证据的弱候选(纯数字噪声)做 top×0.75 过滤，避免高分码拖死同屏次高分真实码。
+            if (c.strong || c.score >= top * 0.75f)
                 results.add(ExtractedCode(c.code, c.type, c.source, (c.score / SCORE_PREFIXED).coerceIn(0f, 1f)))
         }
         if (context != null) recordLearning(context, results, allText, source)
@@ -888,7 +892,7 @@ object CodeExtractor {
         return listOf("展开", "复制", "拨打", "导航", "订阅", "延长收货", "查看物流", "确认收货").none { t.contains(it) }
     }
 
-    private data class Candidate(val code: String, val type: CodeType, val score: Float, val source: String)
+    private data class Candidate(val code: String, val type: CodeType, val score: Float, val source: String, val strong: Boolean = false)
 
     private fun posBonus(line: OCREngine.TextLine, screenHeight: Int): Float {
         val box = line.boundingBox ?: return 0f
