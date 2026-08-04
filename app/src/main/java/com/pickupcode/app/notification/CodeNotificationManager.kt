@@ -3,6 +3,7 @@ package com.pickupcode.app.notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
@@ -110,6 +111,58 @@ object CodeNotificationManager {
     fun dismissById(context: Context, id: Int) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.cancel(id)
+    }
+
+    // ---------------------------------------------------------------
+    // C3: 稍后提醒 —— 用 AlarmManager 定时再弹一条取件/取餐提醒
+    // ---------------------------------------------------------------
+
+    /** 触发用的 extra key（与 RemindReceiver 共用）。 */
+    private const val EXTRA_REMIND_CODE = "remind_code"
+    private const val EXTRA_REMIND_TYPE = "remind_type"
+    private const val EXTRA_REMIND_SOURCE = "remind_source"
+
+    /** 稍后提醒：delayMs 毫秒后（默认 1 小时）重新推一条提醒通知。 */
+    fun remindLater(context: Context, code: String, type: CodeExtractor.CodeType,
+                    source: String, delayMs: Long = 60L * 60 * 1000) {
+        val alarm = context.getSystemService(AlarmManager::class.java) ?: return
+        val intent = Intent(context, RemindReceiver::class.java).apply {
+            putExtra(EXTRA_REMIND_CODE, code)
+            putExtra(EXTRA_REMIND_TYPE, type.name)
+            putExtra(EXTRA_REMIND_SOURCE, source)
+        }
+        val pi = PendingIntent.getBroadcast(context, safeId(type, code) and 0x7fffffff, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val triggerAt = System.currentTimeMillis() + delayMs
+        try {
+            alarm.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+        } catch (_: SecurityException) {
+            // 无 SCHEDULE_EXACT_ALARM 权限时退化为普通 set（有延迟但可用）
+            alarm.set(AlarmManager.RTC_WAKEUP, triggerAt, pi)
+        }
+    }
+
+    /** RemindReceiver 在 onReceive 里调用：真正弹出提醒通知。 */
+    fun showReminder(context: Context, code: String, type: CodeExtractor.CodeType, source: String) {
+        if (code.isBlank()) return
+        try {
+            val style = typeStyle(type)
+            val pendingIntent = PendingIntent.getActivity(
+                context, 0,
+                Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK },
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val notification = NotificationCompat.Builder(context, style.channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle("⏰ 稍后提醒：${style.title} $code")
+                .setContentText("记得去取：$code（$source）")
+                .setAutoCancel(true)
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setContentIntent(pendingIntent)
+                .build()
+            val manager = context.getSystemService(NotificationManager::class.java) ?: return
+            manager.notify(safeId(type, code) and 0x7fffffff, notification)
+        } catch (_: Exception) { }
     }
 
     /** Show notification for a duplicate code — informs user there are now ≥2 records for this code. */

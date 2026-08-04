@@ -95,6 +95,8 @@ fun CodeDetailScreen(
                             PatternLearner.recordCodeIncorrect(ctx, CodeExtractor.getPatternId(item.code))
                             // 反馈闭环：把误报的原始文本送入学习池，让自学习重新聚类该格式
                             PatternLearner.recordIncorrectSample(ctx, item.rawTextSnippet)
+                            // A3: 该码值加入可学习排除，之后识别不再把它当取件码
+                            PatternLearner.addExclude(ctx, item.code)
                         }
                     }
                 )
@@ -138,6 +140,19 @@ fun CodeDetailScreen(
                             Text("📍", fontSize = 20.sp)
                         }
                     })
+
+                // C2: 常用取件点提示
+                val freqPoint = remember(item.pickupAddress) { PatternLearner.isFrequentPickupPoint(ctx, item.pickupAddress) }
+                if (freqPoint != null) {
+                    Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("🏠 常用取件点 · 已取 ${freqPoint.count} 次", style = MaterialTheme.typography.labelSmall) },
+                            colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                        )
+                    }
+                }
+
                 // Show geo verification badge
                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (item.geoVerified) {
@@ -232,9 +247,31 @@ fun CodeDetailScreen(
                     }
                 }
                 if (onMarkDone != null) {
-                    Button(onClick = { confirmAll(); onMarkDone(item.id) }, modifier = Modifier.fillMaxWidth(),
+                    Button(onClick = {
+                        confirmAll()
+                        // C2: 标记已取时把取件地址登记为常用取件点
+                        if (item.pickupAddress.isNotBlank()) PatternLearner.registerPickupPoint(ctx, item.pickupAddress)
+                        onMarkDone(item.id)
+                    }, modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8DC0E0), contentColor = Color.White)) {
                         Text("📦 标记已取")
+                    }
+                }
+                // C3: 稍后提醒（1 小时后推通知）
+                Row(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = {
+                            com.pickupcode.app.notification.CodeNotificationManager.remindLater(
+                                ctx, item.code,
+                                when (item.type) { "pickup_parcel" -> com.pickupcode.app.extractor.CodeExtractor.CodeType.pickup_parcel; "coupon" -> com.pickupcode.app.extractor.CodeExtractor.CodeType.coupon; else -> com.pickupcode.app.extractor.CodeExtractor.CodeType.pickup_food },
+                                item.source
+                            )
+                            android.widget.Toast.makeText(ctx, "已设置 1 小时后稍后提醒", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Text("⏰ 稍后提醒")
                     }
                 }
             }

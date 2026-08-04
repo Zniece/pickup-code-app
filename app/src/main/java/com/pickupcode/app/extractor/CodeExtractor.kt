@@ -40,7 +40,7 @@ object CodeExtractor {
     private val PAREN_ADDR = Regex("\\uFF08([^\\uFF09]*[路街段柜])\\uFF09")
     private val PING_NOISE_TRAIL = Regex("凭\\s*[A-Za-z0-9\\-]+\\s*$")
     private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*$")
-    private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号)")
+    private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号|驿站|快递柜|自提柜|取件点)")
     private val ORDER_LONG_SQL = Regex("\\b\\d{6,}-\\d{5,}\\b")
     private val ORDER_SHORT_SQL = Regex("\\b\\d{2,4}-\\d{3,4}-\\d{4,}\\b")
 
@@ -136,7 +136,7 @@ object CodeExtractor {
     // Code extraction
     // ---------------------------------------------------------------
 
-    fun extract(lines: List<OCREngine.TextLine>, screenHeight: Int = 0, context: Context? = null): List<ExtractedCode> {
+    fun extract(lines: List<OCREngine.TextLine>, screenHeight: Int = 0, context: Context? = null, source: String = "screen"): List<ExtractedCode> {
         val candidates = mutableListOf<Candidate>()
         val allText = lines.joinToString(" ") { it.text }
         val isFoodContext = FOOD_KEYWORDS.any { allText.contains(it, ignoreCase = true) }
@@ -221,15 +221,20 @@ object CodeExtractor {
         )
 
         // Load auto-learned patterns
+        // B3: 记住"编译后 pattern -> 存储用 regex 字符串"，命中时用来 touchRule 刷新 lastUsedAt
+        val regexToLearned = mutableMapOf<String, String>()
         if (context != null) {
             val learned = com.pickupcode.app.learner.PatternLearner.getLearnedPatterns(context)
             for (rule in learned) {
+                // A1: 用户停用的规则不再参与识别；B3: 衰减降级的规则也不再强制应用
+                if (!rule.enabled || rule.decayed) continue
                 try {
                     val regex = Regex(rule.regex)
                     val type = if (rule.type == "pickup_food") CodeType.pickup_food else CodeType.pickup_parcel
                     // Auto-learned patterns are lower confidence: require the match to be >= 3 chars
                     // to avoid over-broad learned rules matching 2-char noise like X1 / A1.
                     rules.add(Rule(regex, type, 65f, 10f, minMatchLen = 3))
+                    regexToLearned[regex.pattern] = rule.regex
                 } catch (_: Exception) { /* skip invalid regex */ }
             }
         }
@@ -239,7 +244,7 @@ object CodeExtractor {
             val size = sizeBonus(line, avgFontHeight)
             for (rule in rules) {
                 rule.regex.findAll(line.text).forEach matchLoop@{ m ->
-                    if (isExcluded(m.value)) return@matchLoop
+                    if (isExcluded(m.value, context)) return@matchLoop
                     // Auto-learned rules: reject over-short matches (e.g. X1 / A1 2-char noise)
                     if (rule.minMatchLen > 0 && m.value.length < rule.minMatchLen) return@matchLoop
                     var s = rule.baseScore + pos
@@ -263,6 +268,13 @@ object CodeExtractor {
                     if (ctxOk) s += rule.ctxBonus
                     val conflict = when (rule.type) { CodeType.pickup_food -> isParcelContext && !isFoodContext; CodeType.pickup_parcel -> isFoodContext && !isParcelContext; CodeType.coupon -> false }
                     if (conflict) s -= 8f
+
+                    // B3: 命中已学规则 → 刷新其 lastUsedAt 并解除衰减（用于"这条规则最近还被用到吗"衰减机制）
+                    if (context != null && rule.baseScore == 65f && m.value.length >= 3) {
+                        regexToLearned[rule.regex.pattern]?.let { r ->
+                            PatternLearner.touchRule(context, r)
+                        }
+                    }
 
                     candidates.add(Candidate(m.value, rule.type, s, sourceFromLine(line,
                         if (rule.type == CodeType.pickup_food) "food" else "parcel", lines, allText)))
@@ -322,7 +334,7 @@ object CodeExtractor {
             if (c.score >= top * 0.75f)
                 results.add(ExtractedCode(c.code, c.type, c.source, (c.score / SCORE_PREFIXED).coerceIn(0f, 1f)))
         }
-        if (context != null) recordLearning(context, results, allText)
+        if (context != null) recordLearning(context, results, allText, source)
         return results
     }
 
@@ -1052,7 +1064,10 @@ object CodeExtractor {
         Regex("\\d{2,5}")                                              // PURE_NUMBER_FOOD
     )
 
-    private fun isExcluded(code: String) = EXCLUDE_PATTERNS.any { it.containsMatchIn(code) }
+    private fun isExcluded(code: String, context: Context? = null) =
+        EXCLUDE_PATTERNS.any { it.containsMatchIn(code) } ||
+        // A3: 用户标记"不是取件码"的可学习排除片段
+        com.pickupcode.app.learner.PatternLearner.isLearnedExcluded(code, context)
 
     // ---------------------------------------------------------------
     // Pattern learning feedback
@@ -1066,14 +1081,14 @@ object CodeExtractor {
         "LONG_NUMBER_PARCEL" to LONG_NUMBER_PARCEL,
     )
 
-    private fun recordLearning(context: Context, results: List<ExtractedCode>, allText: String) {
+    private fun recordLearning(context: Context, results: List<ExtractedCode>, allText: String, source: String) {
         if (results.isNotEmpty()) {
             for (r in results) {
                 val pid = classifyFormat(r.code)
                 PatternLearner.recordAttempt(context, pid)
             }
         } else {
-            PatternLearner.recordMiss(context, allText.take(500))
+            PatternLearner.recordMiss(context, allText.take(500), source)
         }
     }
 

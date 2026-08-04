@@ -252,7 +252,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
         // 正则（无券码时运行）
         if (!hasCoupon) {
-            val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this)
+            val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this, source = "screen")
             for (re in regexResults) {
                 if (re.confidence >= settings.confidenceThreshold && isTypeEnabled(re.type, settings)) {
                     allResults.add(re.code to re.type)

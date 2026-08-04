@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
@@ -132,7 +133,8 @@ class MainActivity : ComponentActivity() {
                         onFabClick = { showManualDialog = true },
                         onTrashClick = { currentScreen = Screen.Trash },
                         onStatsClick = { currentScreen = Screen.Stats },
-                        onDedupClick = { currentScreen = Screen.Dedup }
+                        onDedupClick = { currentScreen = Screen.Dedup },
+                        onOpenShareGuide = { currentScreen = Screen.Settings }
                     )
                     Screen.Settings -> SettingsScreen(
                         onBack = { currentScreen = Screen.Home },
@@ -259,7 +261,8 @@ fun MainScreen(
     onFabClick: () -> Unit,
     onTrashClick: () -> Unit,
     onStatsClick: () -> Unit,
-    onDedupClick: () -> Unit
+    onDedupClick: () -> Unit,
+    onOpenShareGuide: () -> Unit
 ) {
     val context = LocalContext.current
     val db = AppDatabase.getInstance(context)
@@ -388,6 +391,27 @@ fun MainScreen(
                                 Text("固定后点击磁贴，再在3秒内退出控制面板即可自动识别", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Medium)
                             }
                         }
+                    }
+                }
+            }
+
+            // C1: 多入口使用引导卡（弱化无障碍依赖，突出分享/通知/手动）
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("📥 怎么添加取件码？", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        Text("① 从短信/聊天 App 分享文本进来", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("② 长按选中文字 → 选择「一键闪记」", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("③ 点右下角 ➕ 手动粘贴", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(
+                            onClick = onOpenShareGuide,
+                            colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF8DC0E0))
+                        ) { Text("开启分享识别 →") }
                     }
                 }
             }
