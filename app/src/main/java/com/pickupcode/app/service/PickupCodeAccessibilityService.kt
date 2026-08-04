@@ -34,6 +34,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "PickupCodeA11y"
         private const val CHANNEL_ID = "pickup_code_result"
+        // M12: 结果提示通知用独立保留 id 段（safeId 是 hash&0x7fffffff，此处用固定高位几乎不冲突）
+        private const val RESULT_NOTIFY_ID = 0x7FFFFF00
 
         @JvmField
         val triggerRequested = AtomicBoolean(false)
@@ -379,29 +381,16 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             val db = AppDatabase.getInstance(this@PickupCodeAccessibilityService)
             val dao = db.codeHistoryDao()
 
-            // 查重：同 code+type 已有记录则更新，否则新增
-            val existing = dao.findByCodeAndType(code, type.name)
-            val id = if (existing != null) {
-                // 更新已有记录：刷新时间戳、截图、来源，恢复为活跃
-                dao.update(existing.copy(
-                    timestamp = System.currentTimeMillis(),
-                    screenshotPath = screenshotPath.ifEmpty { existing.screenshotPath },
-                    source = source,
-                    rawTextSnippet = raw,
-                    pickupAddress = address.ifBlank { existing.pickupAddress },
-                    isActive = true,
-                    doneAt = 0
-                ))
-                existing.id
-            } else {
-                dao.insert(CodeHistory(
-                    code = code, type = type.name,
-                    source = source,
-                    screenshotPath = screenshotPath,
-                    rawTextSnippet = raw,
-                    pickupAddress = address
-                ))
-            }
+            // H6: 事务内原子化去重保存（查重+插入/更新），避免与分享/手动并发产生重复行
+            val save = dao.saveOrUpdate(CodeHistory(
+                code = code, type = type.name,
+                source = source,
+                screenshotPath = screenshotPath,
+                rawTextSnippet = raw,
+                pickupAddress = address,
+                timestamp = System.currentTimeMillis()
+            ))
+            val id = save.id
 
             // 检测同 code 不同类型的重复值
             val otherType = if (type == CodeExtractor.CodeType.pickup_food)
@@ -439,7 +428,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             // 频道只需创建一次，但重复 create 是幂等的（同名频道会复用），保留以自取
             nm.createNotificationChannel(android.app.NotificationChannel(
                 CHANNEL_ID, "结果", android.app.NotificationManager.IMPORTANCE_DEFAULT))
-            nm.notify(9998, NotificationCompat.Builder(this, CHANNEL_ID)
+            // M12: 结果提示用独立保留 id 段，避免与 CodeNotificationManager.safeId 空间冲突
+            nm.notify(RESULT_NOTIFY_ID, NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("一键闪记").setContentText(msg)
                 .setAutoCancel(true).setTimeoutAfter(3000).build())

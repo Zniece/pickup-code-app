@@ -109,6 +109,15 @@ object CodeExtractor {
         "免喜", "韵达超市", "欢猫智柜"
     )
 
+    // M11: 品牌+后缀正则一次性预编译（品牌固定，避免热循环里每个品牌每次调用都重新编译 Regex）
+    private val FOOD_SUFFIXES = listOf("取餐", "外卖", "咖啡", "茶饮", "奶茶", "饮品", "点单", "鲜果", "门店")
+    private val COURIER_SUFFIXES = listOf("快递", "速递", "物流", "速运", "超市", "驿站", "智能柜")
+    private val FOOD_BRAND_SUFFIX_REGEX: List<Pair<String, Regex>> =
+        FOOD_BRAND_KEYWORDS.map { it to Regex(Regex.escape(it) + "(?:" + FOOD_SUFFIXES.joinToString("|") { Regex.escape(it) } + ")", RegexOption.IGNORE_CASE) }
+    private val COURIER_BRAND_SUFFIX_REGEX: List<Pair<String, Regex>> =
+        COURIER_BRANDS.map { it to Regex(Regex.escape(it) + "(?:" + COURIER_SUFFIXES.joinToString("|") { Regex.escape(it) } + ")") }
+
+
     private val STATION_TYPE_MAP = mapOf(
         "丰巢" to StationType.LOCKER, "欢猫智柜" to StationType.LOCKER,
         "快递柜" to StationType.LOCKER,
@@ -941,17 +950,12 @@ object CodeExtractor {
         // --- S3: Brand+suffix at line level ---
         val brands = if (hint in listOf("food", "取餐码", "取餐号")) FOOD_BRAND_KEYWORDS else COURIER_BRANDS
         val ignoreCase = hint in listOf("food", "取餐码", "取餐号")
-        val suffixes = if (hint in listOf("food", "取餐码", "取餐号"))
-            listOf("取餐", "外卖", "咖啡", "茶饮", "奶茶", "饮品", "点单", "鲜果", "门店")
-        else
-            listOf("快递", "速递", "物流", "速运", "超市", "驿站", "智能柜")
+        val brandSuffixRegex = if (hint in listOf("food", "取餐码", "取餐号")) FOOD_BRAND_SUFFIX_REGEX else COURIER_BRAND_SUFFIX_REGEX
 
         fun brandWithSuffix(text: String): String? {
-            for (brand in brands.sortedByDescending { it.length }) {
-                val escaped = Regex.escape(brand)
-                val suffixPat = suffixes.map { Regex.escape(it) }.joinToString("|")
-                if (Regex("$escaped(?:$suffixPat)", if (ignoreCase) setOf(RegexOption.IGNORE_CASE) else emptySet()).containsMatchIn(text))
-                    return brand
+            // M11: 用预编译正则，避免每次调用逐品牌重新编译
+            for ((brand, re) in brandSuffixRegex) {
+                if (re.containsMatchIn(text)) return brand
             }
             return null
         }
@@ -1062,7 +1066,8 @@ object CodeExtractor {
         Regex("[A-Za-z]-\\d{3,4}", RegexOption.IGNORE_CASE),          // LETTER_DASH_THREE
         Regex("\\d{6,8}"),                                            // LONG_NUMBER
         Regex("[A-Z]\\s*-?\\s*\\d{2,4}", RegexOption.IGNORE_CASE),  // LETTER_NUMBER_FOOD
-        Regex("\\d{2,5}")                                              // PURE_NUMBER_FOOD
+        // PURE_NUMBER_FOOD：手动/AI 校验无上下文，收紧为 4-5 位，避免 2-3 位裸数字(42/123)被当合法码
+        Regex("\\d{4,5}")
     )
 
     private fun isExcluded(code: String, context: Context? = null) =

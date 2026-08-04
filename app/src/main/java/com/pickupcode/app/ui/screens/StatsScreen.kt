@@ -384,6 +384,7 @@ private fun patternLabel(id: String): String = when (id) {
 @Composable
 private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>, onChanged: () -> Unit) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
@@ -446,14 +447,19 @@ private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>, onChanged:
                     )
                     TextButton(
                         onClick = {
-                            PatternLearner.setRuleEnabled(context, rule.regex, !rule.enabled)
-                            onChanged()
+                            // 写 JSON 到 IO 线程，避免主线程同步 IO
+                            scope.launch(Dispatchers.IO) {
+                                PatternLearner.setRuleEnabled(context, rule.regex, !rule.enabled)
+                                withContext(Dispatchers.Main) { onChanged() }
+                            }
                         }
                     ) { Text(if (rule.enabled) "停用" else "启用", style = MaterialTheme.typography.labelSmall) }
                     TextButton(
                         onClick = {
-                            PatternLearner.deleteRule(context, rule.regex)
-                            onChanged()
+                            scope.launch(Dispatchers.IO) {
+                                PatternLearner.deleteRule(context, rule.regex)
+                                withContext(Dispatchers.Main) { onChanged() }
+                            }
                         },
                         colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) { Text("删除", style = MaterialTheme.typography.labelSmall) }

@@ -78,30 +78,35 @@ object PatternLearner {
 
     /** 记录当天的 {total, hits, misses}，供命中率曲线。 */
     private fun recordDay(context: Context, isHit: Boolean, isMiss: Boolean) {
-        val key = todayKey()
-        val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DAY_STATS, null)
-        val map = linkedMapOf<String, JSONObject>()
-        if (json != null) {
-            try {
-                val arr = JSONArray(json)
-                for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    map[o.optString("date")] = o
-                }
-            } catch (_: Exception) {}
+        // M10: 加锁防并发 read-modify-write 丢计数（识别路径虽多串行，但多入口仍可能有并发写）
+        synchronized(dayStatsLock) {
+            val key = todayKey()
+            val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DAY_STATS, null)
+            val map = linkedMapOf<String, JSONObject>()
+            if (json != null) {
+                try {
+                    val arr = JSONArray(json)
+                    for (i in 0 until arr.length()) {
+                        val o = arr.getJSONObject(i)
+                        map[o.optString("date")] = o
+                    }
+                } catch (_: Exception) {}
+            }
+            val today = map[key] ?: JSONObject().apply { put("date", key); put("total", 0); put("hits", 0); put("misses", 0) }
+            today.put("total", today.optInt("total") + 1)
+            if (isHit) today.put("hits", today.optInt("hits") + 1)
+            if (isMiss) today.put("misses", today.optInt("misses") + 1)
+            map[key] = today
+            // 只保留最近 MAX_DAY_STATS 天
+            val sorted = map.values.sortedBy { it.optString("date") }.takeLast(MAX_DAY_STATS)
+            val out = JSONArray()
+            for (o in sorted) out.put(o)
+            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .edit().putString(KEY_DAY_STATS, out.toString()).apply()
         }
-        val today = map[key] ?: JSONObject().apply { put("date", key); put("total", 0); put("hits", 0); put("misses", 0) }
-        today.put("total", today.optInt("total") + 1)
-        if (isHit) today.put("hits", today.optInt("hits") + 1)
-        if (isMiss) today.put("misses", today.optInt("misses") + 1)
-        map[key] = today
-        // 只保留最近 MAX_DAY_STATS 天
-        val sorted = map.values.sortedBy { it.optString("date") }.takeLast(MAX_DAY_STATS)
-        val out = JSONArray()
-        for (o in sorted) out.put(o)
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY_DAY_STATS, out.toString()).apply()
     }
+
+    private val dayStatsLock = Any()
 
     /** 每日命中率序列：按日期升序的 {date, total, hits, misses}。 */
     data class DayStat(val date: String, val total: Int, val hits: Int, val misses: Int)
@@ -443,6 +448,7 @@ object PatternLearner {
 
     // 对 JSON 样本文件的写操作统一加锁，避免并发 read-modify-write 竞态导致丢失样本
     private val unmatchedLock = Any()
+private val verifiedAddrLock = Any()
 
     private fun appendUnmatched(context: Context, rawText: String, source: String = "unknown") {
         if (rawText.isBlank()) return
@@ -488,18 +494,20 @@ object PatternLearner {
             .putInt("addr_total", total + 1)
             .apply()
 
-        // Store last verified address as positive example for extraction tuning
-        val file = File(context.filesDir, "verified_addresses.json")
-        val arr = if (file.exists()) {
-            try { JSONArray(file.readText()) } catch (_: Exception) { JSONArray() }
-        } else JSONArray()
-        arr.put(JSONObject().apply {
-            put("address", address)
-            put("confidence", confidence.toDouble())
-            put("ts", System.currentTimeMillis() / 1000)
-        })
-        while (arr.length() > 50) arr.remove(0)
-        file.writeText(arr.toString())
+        // M9: verified_addresses.json 写操作加锁（与 unmatched_samples.json 一致），避免并发 read-modify-write 丢样本
+        synchronized(verifiedAddrLock) {
+            val file = File(context.filesDir, "verified_addresses.json")
+            val arr = if (file.exists()) {
+                try { JSONArray(file.readText()) } catch (_: Exception) { JSONArray() }
+            } else JSONArray()
+            arr.put(JSONObject().apply {
+                put("address", address)
+                put("confidence", confidence.toDouble())
+                put("ts", System.currentTimeMillis() / 1000)
+            })
+            while (arr.length() > 50) arr.remove(0)
+            file.writeText(arr.toString())
+        }
     }
 
     fun getAddressStats(context: Context): Pair<Int, Int> {

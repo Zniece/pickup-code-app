@@ -330,37 +330,22 @@ object ShareReceiver {
         }
 
         for (result in allResults) {
-            // 统一去重语义（与无障碍路径一致）：查到活跃记录 → 原地更新，不新增重复行
-            val existing = db.codeHistoryDao().findByCodeAndType(result.code, result.type.name)
-            val id: Long
-            if (existing != null) {
-                db.codeHistoryDao().update(existing.copy(
-                    timestamp = System.currentTimeMillis(),
-                    screenshotPath = screenshotPath.ifEmpty { existing.screenshotPath },
-                    source = result.source,
-                    rawTextSnippet = rawSnippet,
-                    pickupAddress = address.ifBlank { existing.pickupAddress },
-                    shareSourcePkg = shareSourcePkg.ifEmpty { existing.shareSourcePkg },
-                    shareSourceName = shareSourceName.ifEmpty { existing.shareSourceName },
-                    isActive = true,
-                    doneAt = 0
-                ))
-                id = existing.id
-            } else {
-                id = db.codeHistoryDao().insert(CodeHistory(
-                    code = result.code,
-                    type = result.type.name,
-                    source = result.source,
-                    rawTextSnippet = rawSnippet,
-                    pickupAddress = address,
-                    screenshotPath = screenshotPath,
-                    shareSourcePkg = shareSourcePkg,
-                    shareSourceName = shareSourceName
-                ))
-            }
+            // H6: 统一去重改为事务内原子化 saveOrUpdate（分享/无障碍/手动并发不再产生重复行）
+            val save = db.codeHistoryDao().saveOrUpdate(CodeHistory(
+                code = result.code,
+                type = result.type.name,
+                source = result.source,
+                rawTextSnippet = rawSnippet,
+                pickupAddress = address,
+                screenshotPath = screenshotPath,
+                shareSourcePkg = shareSourcePkg,
+                shareSourceName = shareSourceName,
+                timestamp = System.currentTimeMillis()
+            ))
+            val id = save.id
 
             // Notify user (同码同type已存在 -> 提示重复；否则正常通知)
-            if (existing != null) {
+            if (save.existed) {
                 val dupCount = db.codeHistoryDao().countDuplicateGroups()
                 CodeNotificationManager.showDuplicate(
                     context, result.code, result.type, result.source, id, dupCount
@@ -368,7 +353,7 @@ object ShareReceiver {
             } else {
                 CodeNotificationManager.show(context, result.code, result.type, result.source, id)
             }
-            Log.d(TAG, "Recognized: ${result.code} (${result.type.name}) from ${result.source}${if (existing != null) " [DUPLICATE]" else ""}")
+            Log.d(TAG, "Recognized: ${result.code} (${result.type.name}) from ${result.source}${if (save.existed) " [DUPLICATE]" else ""}")
 
             // Async address geocoding verification
             if (address.isNotBlank() && settings.enableMapVerify) {
@@ -379,13 +364,13 @@ object ShareReceiver {
                             amapApiKey = settings.amapApiKey.ifBlank { null }
                         )
                         if (geoResult.verified) {
-                            // 基于最新记录更新 geo 字段（记录已由上面 update/insert 写入）
+                            // M1: 定向更新 geo 字段，不动 code/address 等其他字段，避免覆盖用户编辑
                             db.codeHistoryDao().findByCodeAndType(result.code, result.type.name)?.let { rec ->
-                                db.codeHistoryDao().update(rec.copy(
-                                    geoVerified = true,
-                                    geoConfidence = geoResult.confidence,
-                                    geoFormattedAddress = geoResult.formattedAddress ?: ""
-                                ))
+                                db.codeHistoryDao().updateGeo(
+                                    rec.id, true,
+                                    geoResult.confidence,
+                                    geoResult.formattedAddress ?: ""
+                                )
                             }
                             Log.d(TAG, "Geo verify OK: $address -> ${geoResult.formattedAddress} (${geoResult.confidence})")
                         } else {

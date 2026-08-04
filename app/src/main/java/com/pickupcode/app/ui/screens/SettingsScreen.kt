@@ -55,7 +55,8 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { Text("识别灵敏度", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
             item { Text("阈值越低越宽松，越高越严格", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Row(verticalAlignment = Alignment.CenterVertically) {
-                var confDraft by remember { mutableStateOf(s.confidenceThreshold) }
+                // M2: 跟随 s.confidenceThreshold 变化(DataStore 加载完成后自动同步滑块)，避免重启后显示初始默认而非保存值
+                var confDraft by remember(s.confidenceThreshold) { mutableStateOf(s.confidenceThreshold) }
                 Slider(value = confDraft,
                     onValueChange = { confDraft = it },
                     onValueChangeFinished = { scope.launch(Dispatchers.IO) { AppPreferences.setConfidenceThreshold(ctx, confDraft) } },

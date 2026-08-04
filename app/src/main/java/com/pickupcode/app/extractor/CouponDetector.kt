@@ -7,6 +7,7 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -60,6 +61,8 @@ object CouponDetector {
                     .filter { !it.rawValue.isNullOrBlank() }
                     .map { CouponResult(rawValue = it.rawValue) }
             }
+        } catch (e: CancellationException) {
+            throw e   // H2: 协程取消必须重抛，不能吞
         } catch (e: Exception) {
             Log.e(TAG, "条码检测失败: ${e.message}")
             emptyList()
