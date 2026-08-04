@@ -297,7 +297,7 @@ object ShareReceiver {
         // 识别到券码后互斥：不再做取餐码/取件码的识别与标注（避免券码+OCR码重复/误标）
         if (!hasCoupon) {
             // 正则主路径先行（问题3：分享路径接入 AI，但不阻塞）
-            val regexResults = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context) }
+            val regexResults = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context, source = "share") }
             for (re in regexResults) {
                 if (re.confidence >= settings.confidenceThreshold && !isTypeDisabled(re.type, settings)) {
                     allResults.add(re)

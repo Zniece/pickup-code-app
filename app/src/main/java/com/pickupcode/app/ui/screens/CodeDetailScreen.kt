@@ -3,6 +3,7 @@ package com.pickupcode.app.ui.screens
 import android.content.Intent
 import android.util.Log
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -93,8 +94,9 @@ fun CodeDetailScreen(
                         PatternLearner.setCodeIncorrect(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
                             PatternLearner.recordCodeIncorrect(ctx, CodeExtractor.getPatternId(item.code))
-                            // 反馈闭环：把误报的原始文本送入学习池，让自学习重新聚类该格式
-                            PatternLearner.recordIncorrectSample(ctx, item.rawTextSnippet)
+                            // A3: 该码值加入可学习排除，之后识别不再把它当取件码。
+                            // 注意：不把误报文本喂入学习池(unmatched_samples)——否则会学生出与"排除"矛盾的新规则。
+                            PatternLearner.addExclude(ctx, item.code)
                         }
                     }
                 )
@@ -138,6 +140,22 @@ fun CodeDetailScreen(
                             Text("📍", fontSize = 20.sp)
                         }
                     })
+
+                // C2: 常用取件点提示（IO 线程查，避免组合期主线程解析 JSON）
+                val freqPoint by produceState<PatternLearner.PickupPoint?>(null, item.pickupAddress) {
+                    value = withContext(Dispatchers.IO) { PatternLearner.isFrequentPickupPoint(ctx, item.pickupAddress) }
+                }
+                val freq = freqPoint  // 捕获局部值，便于智能转换
+                if (freq != null) {
+                    Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AssistChip(
+                            onClick = {},
+                            label = { Text("🏠 常用取件点 · 已取 ${freq.count} 次", style = MaterialTheme.typography.labelSmall) },
+                            colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                        )
+                    }
+                }
+
                 // Show geo verification badge
                 Row(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (item.geoVerified) {
@@ -197,8 +215,32 @@ fun CodeDetailScreen(
                     }
                 }
                 if (showFullscreen) {
-                    AlertDialog(onDismissRequest = { showFullscreen = false }, confirmButton = { TextButton(onClick = { showFullscreen = false }) { Text("关闭") } },
-                        text = { bitmap?.let { bmp -> Image(bitmap = bmp.asImageBitmap(), contentDescription = "截屏全屏", modifier = Modifier.fillMaxWidth(), contentScale = ContentScale.FillWidth) } })
+                    // 无边框全屏预览：黑底 + 完整图片（含长宽比）居中，点任意处关闭
+                    androidx.compose.ui.window.Dialog(
+                        onDismissRequest = { showFullscreen = false },
+                        properties = androidx.compose.ui.window.DialogProperties(
+                            dismissOnBackPress = true,
+                            dismissOnClickOutside = true,
+                            usePlatformDefaultWidth = false  // 铺满全屏，去掉 AlertDialog 的默认宽度限制与卡片边框
+                        )
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.Black)
+                                .clickable { showFullscreen = false },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            bitmap?.let { bmp ->
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "截屏全屏",
+                                    modifier = Modifier.fillMaxSize().padding(12.dp),
+                                    contentScale = ContentScale.Fit
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -232,9 +274,33 @@ fun CodeDetailScreen(
                     }
                 }
                 if (onMarkDone != null) {
-                    Button(onClick = { confirmAll(); onMarkDone(item.id) }, modifier = Modifier.fillMaxWidth(),
+                    Button(onClick = {
+                        confirmAll()
+                        // C2: 标记已取时把取件地址登记为常用取件点（IO 线程写盘，避免主线程同步 IO）
+                        if (item.pickupAddress.isNotBlank()) {
+                            scope.launch(Dispatchers.IO) { PatternLearner.registerPickupPoint(ctx, item.pickupAddress) }
+                        }
+                        onMarkDone(item.id)
+                    }, modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF8DC0E0), contentColor = Color.White)) {
                         Text("📦 标记已取")
+                    }
+                }
+                // C3: 稍后提醒（1 小时后推通知）
+                Row(Modifier.fillMaxWidth()) {
+                    OutlinedButton(
+                        onClick = {
+                            com.pickupcode.app.notification.CodeNotificationManager.remindLater(
+                                ctx, item.code,
+                                when (item.type) { "pickup_parcel" -> com.pickupcode.app.extractor.CodeExtractor.CodeType.pickup_parcel; "coupon" -> com.pickupcode.app.extractor.CodeExtractor.CodeType.coupon; else -> com.pickupcode.app.extractor.CodeExtractor.CodeType.pickup_food },
+                                item.source
+                            )
+                            android.widget.Toast.makeText(ctx, "已设置 1 小时后稍后提醒", android.widget.Toast.LENGTH_SHORT).show()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f))
+                    ) {
+                        Text("⏰ 稍后提醒")
                     }
                 }
             }

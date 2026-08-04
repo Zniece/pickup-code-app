@@ -1,6 +1,7 @@
 package com.pickupcode.app.ui.screens
 
 import android.util.Log
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -8,6 +9,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,13 +32,27 @@ fun StatsScreen(onBack: () -> Unit) {
     var stats by remember { mutableStateOf<PatternStats?>(null) }
     var suggestions by remember { mutableStateOf<List<PatternSuggestion>>(emptyList()) }
     var learnedRules by remember { mutableStateOf<List<PatternLearner.LearnedRule>>(emptyList()) }
+    var dailyStats by remember { mutableStateOf<List<PatternLearner.DayStat>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
+
+    fun reloadLearned() {
+        scope.launch {
+            learnedRules = withContext(Dispatchers.IO) { PatternLearner.getLearnedPatterns(context) }
+        }
+    }
+
+    fun reloadDaily() {
+        scope.launch {
+            dailyStats = withContext(Dispatchers.IO) { PatternLearner.getDailyStats(context) }
+        }
+    }
 
     LaunchedEffect(Unit) {
         try {
             stats = withContext(Dispatchers.IO) { PatternLearner.getStats(context) }
             suggestions = withContext(Dispatchers.IO) { PatternLearner.getSuggestions(context) }
             learnedRules = withContext(Dispatchers.IO) { PatternLearner.getLearnedPatterns(context) }
+            dailyStats = withContext(Dispatchers.IO) { PatternLearner.getDailyStats(context) }
             // Trigger auto-apply on view
             withContext(Dispatchers.IO) { PatternLearner.autoApply(context) }
         } catch (e: Exception) {
@@ -54,6 +70,18 @@ fun StatsScreen(onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                    }
+                },
+                actions = {
+                    // C4: 成绩卡分享（生成图片海报）
+                    if (stats != null) {
+                        IconButton(onClick = {
+                            scope.launch(Dispatchers.IO) {
+                                com.pickupcode.app.share.ShareStatsCard.share(context, stats!!)
+                            }
+                        }) {
+                            Icon(Icons.Default.Share, "分享成绩卡")
+                        }
                     }
                 }
             )
@@ -77,6 +105,10 @@ fun StatsScreen(onBack: () -> Unit) {
                     PatternBreakdownCard(s)
                 } ?: EmptyStateMessage()
 
+                if (dailyStats.isNotEmpty()) {
+                    HitRateCard(dailyStats)
+                }
+
                 SuggestionsCard(suggestions) { cleared ->
                     if (cleared) {
                         scope.launch {
@@ -87,7 +119,7 @@ fun StatsScreen(onBack: () -> Unit) {
                     }
                 }
 
-                LearnedRulesCard(learnedRules)
+                LearnedRulesCard(learnedRules, onChanged = { reloadLearned() })
             }
         }
     }
@@ -273,6 +305,72 @@ private fun EmptyStateMessage() {
     }
 }
 
+/** B2: 命中率曲线卡片（Compose Canvas 手写折线图，不引第三方图表库）。 */
+@Composable
+private fun HitRateCard(stats: List<PatternLearner.DayStat>) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("📈 命中率趋势", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text("近 ${stats.size} 天识别命中率变化", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(12.dp))
+            if (stats.size < 2) {
+                Text("累计样本不足，继续使用后展示曲线。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else {
+                val lineColor = MaterialTheme.colorScheme.primary
+                val gridColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                Canvas(Modifier.fillMaxWidth().height(140.dp)) {
+                    val w = size.width
+                    val h = size.height
+                    val padB = 18.dp.toPx()
+                    val padT = 8.dp.toPx()
+                    val plotH = h - padB - padT
+                    val maxRate = stats.mapNotNull { if (it.total > 0) it.hits.toFloat() / it.total else null }
+                        .maxOrNull()?.coerceAtLeast(0.01f) ?: 0.01f
+                    val n = stats.size
+                    // 画水平网格线 + 基线
+                    drawLine(gridColor, androidx.compose.ui.geometry.Offset(0f, h - padB), androidx.compose.ui.geometry.Offset(w, h - padB), strokeWidth = 1.dp.toPx())
+                    // 逐点画命中率折线（y = 每日命中率，相对最高命中率归一化）
+                    val points = stats.mapIndexed { i, s ->
+                        val x = if (n == 1) w / 2f else w * i / (n - 1).toFloat()
+                        val rate = if (s.total > 0) s.hits.toFloat() / s.total else 0f
+                        val normalized = (rate / maxRate)
+                        androidx.compose.ui.geometry.Offset(x, h - padB - plotH * normalized)
+                    }
+                    for (i in 1 until points.size) {
+                        drawLine(lineColor, points[i - 1], points[i], strokeWidth = 2.5.dp.toPx())
+                    }
+                    for (p in points) {
+                        drawCircle(lineColor, radius = 3.dp.toPx(), center = p)
+                    }
+                    // 每点下方标日期（只标最多 7 个避免拥挤）
+                    val step = (n / 7).coerceAtLeast(1)
+                    // 文字用 drawContext 太复杂，这里简化为只画曲线，日期标签放到下方描述
+                }
+                // 命中率描述
+                val recent = stats.takeLast(1).first()
+                val avgRate = stats.filter { it.total > 0 }.let { list ->
+                    val sum = list.sumOf { it.hits }
+                    val tot = list.sumOf { it.total }
+                    if (tot > 0) (sum * 100 / tot) else 0
+                }
+                Text(
+                    "近${stats.size}天命中率约 $avgRate% · 最近(${recent.date}) ${if (recent.total > 0) recent.hits * 100 / recent.total else 0}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    stats.joinToString("  ") { s -> "${s.date.takeLast(5)}:${s.hits}/${s.total}" },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 private fun patternLabel(id: String): String = when (id) {
     "PREFIXED_CODE" -> "前缀匹配（取件码: XXX）"
     "THREE_SEGMENT_PARCEL" -> "三段式取件码（1-2-3456）"
@@ -284,14 +382,15 @@ private fun patternLabel(id: String): String = when (id) {
 }
 
 @Composable
-private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>) {
+private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>, onChanged: () -> Unit) {
+    val context = LocalContext.current
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
         Column(Modifier.padding(16.dp)) {
             Text("🧠 已学习规则", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("系统自动从未识别样本中学习并应用的新正则", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("系统自动从未识别样本中学习并应用的新正则。可停用/删除误学报废的规则。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             if (rules.isEmpty()) {
                 Text(
@@ -308,18 +407,35 @@ private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
-                        Text(
-                            rule.label,
-                            style = MaterialTheme.typography.bodyMedium,
-                            fontWeight = FontWeight.Medium
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                rule.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium,
+                                color = if (!rule.enabled || rule.decayed) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface
+                            )
+                            // A2: 质量标签（样本数 + 置信度）
+                            Text(
+                                " · 样本${rule.sampleCount} · ${(rule.confidence * 100).toInt()}%",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (rule.decayed) {
+                                AssistChip(onClick = {}, label = { Text("已衰减", style = MaterialTheme.typography.labelSmall) },
+                                    colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface))
+                            }
+                        }
                         Text(
                             rule.regex,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary,
                             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
                         )
+                        if (!rule.enabled) {
+                            Text("已停用", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                        }
                     }
+                    // A1: 停用/启用 + 删除 按钮 + 类型图标
                     Text(
                         when (rule.type) {
                             "pickup_food" -> "🥤"
@@ -328,6 +444,19 @@ private fun LearnedRulesCard(rules: List<PatternLearner.LearnedRule>) {
                         },
                         style = MaterialTheme.typography.titleMedium
                     )
+                    TextButton(
+                        onClick = {
+                            PatternLearner.setRuleEnabled(context, rule.regex, !rule.enabled)
+                            onChanged()
+                        }
+                    ) { Text(if (rule.enabled) "停用" else "启用", style = MaterialTheme.typography.labelSmall) }
+                    TextButton(
+                        onClick = {
+                            PatternLearner.deleteRule(context, rule.regex)
+                            onChanged()
+                        },
+                        colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                    ) { Text("删除", style = MaterialTheme.typography.labelSmall) }
                 }
             }
         }
