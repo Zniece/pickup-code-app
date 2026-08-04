@@ -1062,7 +1062,8 @@ object CodeExtractor {
         Regex("[A-Za-z]-\\d{3,4}", RegexOption.IGNORE_CASE),          // LETTER_DASH_THREE
         Regex("\\d{6,8}"),                                            // LONG_NUMBER
         Regex("[A-Z]\\s*-?\\s*\\d{2,4}", RegexOption.IGNORE_CASE),  // LETTER_NUMBER_FOOD
-        Regex("\\d{2,5}")                                              // PURE_NUMBER_FOOD
+        // PURE_NUMBER_FOOD：手动/AI 校验无上下文，收紧为 4-5 位，避免 2-3 位裸数字(42/123)被当合法码
+        Regex("\\d{4,5}")
     )
 
     private fun isExcluded(code: String, context: Context? = null) =

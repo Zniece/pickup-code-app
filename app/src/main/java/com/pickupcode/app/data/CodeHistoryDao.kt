@@ -74,6 +74,34 @@ interface CodeHistoryDao {
     /** 统计活跃的重复组数量 */
     @Query("SELECT COUNT(*) FROM (SELECT 1 FROM code_history WHERE isActive = 1 GROUP BY code, type HAVING COUNT(*) >= 2)")
     suspend fun countDuplicateGroups(): Int
+
+    /** H6 去重的保存结果：id = 记录 id，existed = 是否命中已存在的活跃记录（用于通知去重提示）。 */
+    class SaveResult(val id: Long, val existed: Boolean)
+
+    /**
+     * H6: 事务内原子化「查询已有 + 插入/更新」，避免多入口(分享/无障碍/手动)并发对同一 code+type
+     * 各自 find→insert 产生重复行。已存在则按新信息更新并返回现有 id；不存在则插入返回新 id。
+     */
+    @Transaction
+    suspend fun saveOrUpdate(history: CodeHistory): SaveResult {
+        val existing = findByCodeAndType(history.code, history.type)
+        return if (existing != null) {
+            update(existing.copy(
+                source = if (history.source.isNotBlank()) history.source else existing.source,
+                pickupAddress = if (history.pickupAddress.isNotBlank()) history.pickupAddress else existing.pickupAddress,
+                screenshotPath = if (history.screenshotPath.isNotBlank()) history.screenshotPath else existing.screenshotPath,
+                rawTextSnippet = if (history.rawTextSnippet.isNotBlank()) history.rawTextSnippet else existing.rawTextSnippet,
+                shareSourcePkg = if (history.shareSourcePkg.isNotBlank()) history.shareSourcePkg else existing.shareSourcePkg,
+                shareSourceName = if (history.shareSourceName.isNotBlank()) history.shareSourceName else existing.shareSourceName,
+                isActive = true,
+                doneAt = 0,
+                timestamp = history.timestamp
+            ))
+            SaveResult(existing.id, true)
+        } else {
+            SaveResult(insert(history), false)
+        }
+    }
 }
 
 @Database(entities = [CodeHistory::class], version = 4, exportSchema = false)

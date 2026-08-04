@@ -379,29 +379,16 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             val db = AppDatabase.getInstance(this@PickupCodeAccessibilityService)
             val dao = db.codeHistoryDao()
 
-            // 查重：同 code+type 已有记录则更新，否则新增
-            val existing = dao.findByCodeAndType(code, type.name)
-            val id = if (existing != null) {
-                // 更新已有记录：刷新时间戳、截图、来源，恢复为活跃
-                dao.update(existing.copy(
-                    timestamp = System.currentTimeMillis(),
-                    screenshotPath = screenshotPath.ifEmpty { existing.screenshotPath },
-                    source = source,
-                    rawTextSnippet = raw,
-                    pickupAddress = address.ifBlank { existing.pickupAddress },
-                    isActive = true,
-                    doneAt = 0
-                ))
-                existing.id
-            } else {
-                dao.insert(CodeHistory(
-                    code = code, type = type.name,
-                    source = source,
-                    screenshotPath = screenshotPath,
-                    rawTextSnippet = raw,
-                    pickupAddress = address
-                ))
-            }
+            // H6: 事务内原子化去重保存（查重+插入/更新），避免与分享/手动并发产生重复行
+            val save = dao.saveOrUpdate(CodeHistory(
+                code = code, type = type.name,
+                source = source,
+                screenshotPath = screenshotPath,
+                rawTextSnippet = raw,
+                pickupAddress = address,
+                timestamp = System.currentTimeMillis()
+            ))
+            val id = save.id
 
             // 检测同 code 不同类型的重复值
             val otherType = if (type == CodeExtractor.CodeType.pickup_food)

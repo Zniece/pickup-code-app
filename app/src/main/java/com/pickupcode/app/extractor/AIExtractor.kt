@@ -1,6 +1,7 @@
 package com.pickupcode.app.extractor
 
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -75,11 +76,11 @@ object AIExtractor {
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
 
             if (conn.responseCode != 200) {
-                val errBody = try { conn.errorStream?.bufferedReader()?.readText() } catch (_: Exception) { null }
+                val errBody = try { conn.errorStream?.bufferedReader(Charsets.UTF_8)?.readText() } catch (_: Exception) { null }
                 return@withContext AIExtractResult(error = "HTTP ${conn.responseCode}: ${errBody?.take(120) ?: ""}".trim())
             }
 
-            val response = conn.inputStream.bufferedReader().readText()
+            val response = conn.inputStream.bufferedReader(Charsets.UTF_8).readText()
 
             val json = JSONObject(response)
             val content = json.getJSONArray("choices")
@@ -108,6 +109,8 @@ object AIExtractor {
                 ))
             }
             AIExtractResult(results = results)
+        } catch (e: CancellationException) {
+            throw e   // H2: 协程取消必须重抛，不能吞
         } catch (e: Exception) {
             Log.e("AIExtractor", "AI识别异常", e)
             AIExtractResult(error = e.message ?: "AI调用失败")
