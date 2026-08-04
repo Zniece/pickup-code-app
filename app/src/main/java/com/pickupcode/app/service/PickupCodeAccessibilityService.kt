@@ -333,7 +333,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
             // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
             val perCodeAddr = CodeExtractor.extractAddressForCode(ocrLines, code)
-            saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, source,
+            // raw 应存 OCR 全文（误报反馈/详情页展示依赖），不能用触发标签（source）
+            saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, allText,
                 perCodeAddr.ifBlank { address })
         }
 
