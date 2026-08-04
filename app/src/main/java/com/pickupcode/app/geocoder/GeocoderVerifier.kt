@@ -172,10 +172,12 @@ object GeocoderVerifier {
                 val best = geocodes.getJSONObject(0)
                 val location = best.optString("location", "")
                 val parts = location.split(",")
-                val hasLatLon = parts.size == 2
                 // 高德 location 格式为 "经度,纬度"（如 116.397428,39.90923）—— parts[0]=经度(longitude), parts[1]=纬度(latitude)
-                val lon = if (hasLatLon) parts[0].toDoubleOrNull() else null
-                val lat = if (hasLatLon) parts[1].toDoubleOrNull() else null
+                // M8: 不能只判长度，必须数值可解析且在合法范围，否则坐标非法仍算 verified
+                val lon = parts.getOrNull(0)?.trim()?.toDoubleOrNull()
+                val lat = parts.getOrNull(1)?.trim()?.toDoubleOrNull()
+                val hasLatLon = lat != null && lon != null &&
+                    lat in -90.0..90.0 && lon in -180.0..180.0
 
                 val amapLevel = best.optString("level", "")
                 val confidence = when {
