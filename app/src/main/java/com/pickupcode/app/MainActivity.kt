@@ -274,6 +274,8 @@ fun MainScreen(
     var dedupCount by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var typeFilter by remember { mutableStateOf("all") } // all / food / parcel / coupon
+    // C1 引导卡可关闭（本地状态，关闭后本轮不再显示）
+    var hideGuideCard by remember { mutableStateOf(false) }
 
     // 按搜索词 + 类型筛选
     val filteredHistory = remember(activeHistory, searchQuery, typeFilter) {
@@ -396,18 +398,24 @@ fun MainScreen(
                 }
             }
 
-            // C1: 多入口使用引导卡（弱化无障碍依赖，突出分享/通知/手动）
+            // C1: 多入口使用引导卡（弱化无障碍依赖，突出分享/通知/手动；可关闭）
+            if (!hideGuideCard) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                 ) {
                     Column(Modifier.padding(16.dp)) {
-                        Text("📥 怎么添加取件码？", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("📥 怎么添加取件码，取餐码，券码？", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { hideGuideCard = true }, modifier = Modifier.size(28.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = "隐藏", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
                         Spacer(Modifier.height(6.dp))
-                        Text("① 从短信/聊天 App 分享文本进来", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("② 长按选中文字 → 选择「一键闪记」", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("③ 点右下角 ➕ 手动粘贴", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("·从短信/聊天 App 分享", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("·点右下角 ➕ 手动粘贴", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                      Text("·通过无障碍服务调用OCR识别", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(Modifier.height(8.dp))
                         TextButton(
                             onClick = onOpenShareGuide,
@@ -415,6 +423,7 @@ fun MainScreen(
                         ) { Text("开启分享识别 →") }
                     }
                 }
+            }
             }
 
             // 回收站提示
