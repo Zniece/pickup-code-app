@@ -23,8 +23,17 @@ object ShareStatsCard {
     private const val W = 1080
     private const val H = 1560
 
-    /** 生成海报并触发系统分享。须在 IO 线程调用。 */
+    /** 生成海报并触发系统分享。须在 IO 线程调用。*/ 
     fun share(context: Context, stats: PatternLearner.PatternStats) {
+        try {
+            doShare(context, stats)
+        } catch (e: Exception) {
+            // 分享失败（FileProvider/系统分享面板/内存不足）优雅降级，不崩溃
+            android.util.Log.w("ShareStatsCard", "分享成绩卡失败: ${e.message}")
+        }
+    }
+
+    private fun doShare(context: Context, stats: PatternLearner.PatternStats) {
         val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
         drawPoster(canvas, stats)

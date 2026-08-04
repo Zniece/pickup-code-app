@@ -310,6 +310,8 @@ object PatternLearner {
         for (e in excludes.take(MAX_EXCLUDES)) arr.put(e)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_EXCLUDES, arr.toString()).apply()
+        excludeCache = excludes   // 立即刷新进程内缓存
+        excludeCacheAt = System.currentTimeMillis()
     }
 
     /** 当前可学习的排除片段。 */
@@ -322,10 +324,25 @@ object PatternLearner {
         } catch (_: Exception) { emptySet() }
     }
 
+    // 进程内缓存，避免识别热循环里每次候选码都重复 read+parse JSON
+    @Volatile private var excludeCache: Set<String>? = null
+    @Volatile private var excludeCacheAt = 0L
+    private const val EXCLUDE_CACHE_MS = 2000L
+
+    private fun cachedLearnedExcludes(context: Context): Set<String> {
+        val now = System.currentTimeMillis()
+        val cached = excludeCache
+        if (cached != null && now - excludeCacheAt < EXCLUDE_CACHE_MS) return cached
+        val fresh = getLearnedExcludes(context)
+        excludeCache = fresh
+        excludeCacheAt = now
+        return fresh
+    }
+
     /** 判断某码值是否命中已学习的排除片段（供 CodeExtractor 识别时剔除）。 */
     fun isLearnedExcluded(code: String, context: Context?): Boolean {
         if (context == null) return false
-        val excludes = getLearnedExcludes(context)
+        val excludes = cachedLearnedExcludes(context)
         if (excludes.isEmpty()) return false
         return excludes.any { ex -> code.contains(ex, ignoreCase = true) }
     }
