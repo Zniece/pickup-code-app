@@ -69,6 +69,8 @@ object AppPreferences {
 
     /** 是否隐藏主页的无障碍服务引导卡片（首次设置完成后可关）。 */
     private val KEY_HIDE_ACCESSIBILITY_CARD = booleanPreferencesKey("hide_accessibility_card")
+    /** 主页「怎么添加取件码」引导卡是否已隐藏（永久） */
+    private val KEY_HIDE_GUIDE_CARD = booleanPreferencesKey("hide_guide_card")
 
     /** 全部设置项的聚合快照：observe 的每次发射即一个不可变副本。 */
     data class Settings(
@@ -87,7 +89,8 @@ object AppPreferences {
         val amapApiKey: String = "",
         val enableKuaidi100: Boolean = false,
         val kuaidi100Key: String = "",
-        val hideAccessibilityCard: Boolean = false
+        val hideAccessibilityCard: Boolean = false,
+        val hideGuideCard: Boolean = false
     )
 
     /** 订阅设置 Flow：任一 key 变化即发射新的 [Settings] 快照；UI 侧用 collectAsState 消费。 */
@@ -109,7 +112,8 @@ object AppPreferences {
                 amapApiKey = prefs[KEY_AMAP_API_KEY] ?: "",
                 enableKuaidi100 = prefs[KEY_ENABLE_KUAIDI100] ?: false,
                 kuaidi100Key = prefs[KEY_KUAIDI100_KEY] ?: "",
-                hideAccessibilityCard = prefs[KEY_HIDE_ACCESSIBILITY_CARD] ?: false
+                hideAccessibilityCard = prefs[KEY_HIDE_ACCESSIBILITY_CARD] ?: false,
+                hideGuideCard = prefs[KEY_HIDE_GUIDE_CARD] ?: false
             )
         }
     }
@@ -176,5 +180,9 @@ object AppPreferences {
 
     suspend fun setHideAccessibilityCard(context: Context, value: Boolean) {
         context.dataStore.edit { it[KEY_HIDE_ACCESSIBILITY_CARD] = value }
+    }
+
+    suspend fun setHideGuideCard(context: Context, value: Boolean) {
+        context.dataStore.edit { it[KEY_HIDE_GUIDE_CARD] = value }
     }
 }

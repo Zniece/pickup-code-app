@@ -39,7 +39,9 @@ object CodeExtractor {
     private val CABINET_NUM = Regex("(\\d+)号柜")
     private val PAREN_ADDR = Regex("\\uFF08([^\\uFF09]*[路街段柜])\\uFF09")
     private val PING_NOISE_TRAIL = Regex("凭\\s*[A-Za-z0-9\\-]+\\s*$")
-    private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*$")
+    // 跨行前缀：上一行是取件码/凭条等词 + 下一行开头是码（后接地址/通知等）；去掉行尾$锚点，
+    // 否则"231607 到育新路..."这类码后跟真实地址的会被漏抓（需保留开头强锚定 + 后不能紧邻数字/破折号）
+    private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*(?![-\\d])")
     private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号|驿站|快递柜|自提柜|取件点)")
     private val ORDER_LONG_SQL = Regex("\\b\\d{6,}-\\d{5,}\\b")
     private val ORDER_SHORT_SQL = Regex("\\b\\d{2,4}-\\d{3,4}-\\d{4,}\\b")
@@ -162,7 +164,7 @@ object CodeExtractor {
                     val p = m.groupValues[1]
                     candidates.add(Candidate(code,
                         if (p.contains("餐") || p.contains("单")) CodeType.pickup_food else CodeType.pickup_parcel,
-                        SCORE_PREFIXED, sourceFromLine(line, p, lines, allText)))
+                        SCORE_PREFIXED, sourceFromLine(line, p, lines, allText), strong = true))
                 }
             }
             // 跨行：OCR 常把「取件码/凭取」拆成两行（如 上一行结尾「取」+ 本行「件码067865」）
@@ -177,7 +179,7 @@ object CodeExtractor {
                             val p = m.groupValues[1]
                             candidates.add(Candidate(code,
                                 if (p.contains("餐") || p.contains("单")) CodeType.pickup_food else CodeType.pickup_parcel,
-                                SCORE_PREFIXED, sourceFromLine(line, p, lines, allText)))
+                                SCORE_PREFIXED, sourceFromLine(line, p, lines, allText), strong = true))
                         }
                     }
                 }
@@ -195,14 +197,14 @@ object CodeExtractor {
                     val isFood = lines[i].text.contains("餐") || lines[i].text.contains("单")
                     candidates.add(Candidate(code,
                         if (isFood) CodeType.pickup_food else CodeType.pickup_parcel,
-                        SCORE_PREFIXED, sourceFromLine(lines[i], if (isFood) "取餐码" else "取件码", lines, allText)))
+                        SCORE_PREFIXED, sourceFromLine(lines[i], if (isFood) "取餐码" else "取件码", lines, allText), strong = true))
                 }
             }
         }
 
         data class Rule(val regex: Regex, val type: CodeType, val baseScore: Float,
                         val ctxBonus: Float = 0f, val sizeBonus: Boolean = false, val pureNum: Boolean = false,
-                        val minMatchLen: Int = 0, val isLearned: Boolean = false)
+                        val minMatchLen: Int = 0, val isLearned: Boolean = false, val strong: Boolean = false)
 
         // 凭条号句式（凭1-6-5020到...取）：菜鸟驿站/快递柜典型通知，优先且绕过 food 上下文干扰
         for (line in lines) {
@@ -213,17 +215,17 @@ object CodeExtractor {
                 if (PARCEL_KEYWORDS.any { line.text.contains(it) }) s += PING_PARCEL_BONUS
                 if (THREE_SEGMENT_PARCEL.matches(code) || FOUR_SEGMENT_PARCEL.matches(code)) s += PING_MULTISEG_BONUS
                 candidates.add(Candidate(code, CodeType.pickup_parcel, s,
-                    sourceFromLine(line, "凭条号", lines, allText)))
+                    sourceFromLine(line, "凭条号", lines, allText), strong = true))
             }
         }
 
         val rules = mutableListOf(
-            Rule(THREE_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG),
-            Rule(FOUR_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_FOUR_SEG),
-            Rule(LETTER_TWO_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_TWO_SEG),
-            Rule(LETTER_DASH_FIVE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_FIVE),
-            Rule(LETTER_THREE_SEG_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG),
-            Rule(LETTER_DASH_THREE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_THREE),
+            Rule(THREE_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG, strong = true),
+            Rule(FOUR_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_FOUR_SEG, strong = true),
+            Rule(LETTER_TWO_SEGMENT_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_TWO_SEG, strong = true),
+            Rule(LETTER_DASH_FIVE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_FIVE, strong = true),
+            Rule(LETTER_THREE_SEG_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG, strong = true),
+            Rule(LETTER_DASH_THREE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_THREE, strong = true),
             Rule(LONG_NUMBER_PARCEL, CodeType.pickup_parcel, SCORE_LONG_NUM_PARCEL, 10f),
             Rule(LETTER_NUMBER_FOOD, CodeType.pickup_food, SCORE_LETTER_NUM_FOOD, 10f, true),
             Rule(PURE_NUMBER_FOOD, CodeType.pickup_food, SCORE_PURE_NUM_FOOD, 10f, true, true)
@@ -287,7 +289,7 @@ object CodeExtractor {
                     }
 
                     candidates.add(Candidate(m.value, rule.type, s, sourceFromLine(line,
-                        if (rule.type == CodeType.pickup_food) "food" else "parcel", lines, allText)))
+                        if (rule.type == CodeType.pickup_food) "food" else "parcel", lines, allText), strong = rule.strong))
                 }
             }
         }
@@ -341,7 +343,9 @@ object CodeExtractor {
         val top = candidates.firstOrNull()?.score ?: 0f
         for (c in candidates) {
             if (c.code in seen) continue; seen.add(c.code)
-            if (c.score >= top * 0.75f)
+            // 修复多通知同屏漏识别：强上下文证据码(PREFIXED/凭条/段式)不过 top×0.75 阈值，
+            // 只对无证据的弱候选(纯数字噪声)做 top×0.75 过滤，避免高分码拖死同屏次高分真实码。
+            if (c.strong || c.score >= top * 0.75f)
                 results.add(ExtractedCode(c.code, c.type, c.source, (c.score / SCORE_PREFIXED).coerceIn(0f, 1f)))
         }
         if (context != null) recordLearning(context, results, allText, source)
@@ -486,21 +490,34 @@ object CodeExtractor {
             }
         }
         // S0b: 地址: 后跟收货地址（如 收货地址:河南省周口市郸城县育新北…）
+        // 逐行匹配标签值，避免 ADDR_LABEL 在整屏 allText 上贪婪匹配到无关行尾噪声
         if (fullAddress.isEmpty()) {
-            ADDR_LABEL.find(allText)?.let { m ->
-                var a = cleanAddress(m.groupValues[1])
-                // 折叠地址增强：UI 常把地址折叠成短串（如 …育新路与季李庄...展开），
-                // 而完整地址在同屏其它行（快递正文行，如 育新路与季庄街西李庄社区卫生所对面2号柜）。
-                // 若存在包含【短地址前4字】且 isAddressLike 且更长的行，取最长者作为完整地址。
-                if (isAddressLike(a) && a.length >= 4) {
-                    val prefix4 = a.substring(0, 4)
-                    // 候选：以短地址前缀开头、更长、且像地址的行；排除本标签行本身（它只是折叠串的载体）
-                    val better = lines
+            val labelLine = lines.firstOrNull { it.text.trim().contains(Regex("地址[:：]")) }
+            if (labelLine != null) {
+                val a0 = cleanAddress(ADDR_LABEL.find(labelLine.text)?.groupValues?.get(1).orEmpty())
+                // ①同前缀更长地址行(完整地址与标签同屏出现时优先)
+                var a = a0
+                if (isAddressLike(a0) && a0.length >= 4) {
+                    val p4 = a0.substring(0, 4)
+                    val byPrefix = lines
                         .map { it.text.trim() }
-                        .filter { it.length > a.length && it.startsWith(prefix4) && isAddressLike(it) }
+                        .filter { it.length > a0.length && it.startsWith(p4) && isAddressLike(it) }
                         .maxByOrNull { it.length }
-                    if (better != null && better != a) a = better
+                    if (byPrefix != null) a = byPrefix
                 }
+                // ②标签值退化(短/OCR读重如 地址:育新路育新路育)时，取「标签行下方邻近」的干净完整地址，
+                // 按 labelLine 的 y 定位同一通知卡片区域，避免错抓同屏其它驿站(不同通知)的地址。
+                // 用彼此重复兜底：标签行下方的更长地址行优先于退化标签值。
+                val labY = labelLine.boundingBox?.let { it.top.toFloat() } ?: 0f
+                val nearbyBest = lines
+                    .filter { tl ->
+                        val y = tl.boundingBox?.let { it.top.toFloat() } ?: 0f
+                        y > labY && y - labY < 300f && tl.text.trim().length > a0.length
+                    }
+                    .map { it.text.trim() }
+                    .filter { it.length >= 4 && isAddressLike(it) }
+                    .maxByOrNull { it.length }
+                if (nearbyBest != null) a = nearbyBest
                 if (isAddressLike(a)) {
                     fullAddress = a.take(80)
                     addrFrom = "S0b-addrLabel"
@@ -776,6 +793,94 @@ object CodeExtractor {
         )
     }
 
+    /**
+     * 按码定位提取专属地址（多驿站通知中心场景）。
+     * 在「码所在行附近的通知卡片窗口」内找该码的取件地址，而不是全屏抓一个地址。
+     * 码行 ±3 行 且 y 距离 ≤ 400px 视为同一通知卡片。
+     */
+    fun extractAddressForCode(lines: List<OCREngine.TextLine>, code: String): String {
+        if (lines.isEmpty()) return ""
+        val codeIdx = lines.indexOfFirst { it.text.contains(code) }
+        if (codeIdx < 0) return ""
+        val codeBoxTop = lines[codeIdx].boundingBox?.let { it.top.toFloat() }
+
+        fun inWindow(otherIdx: Int): Boolean {
+            if (otherIdx == codeIdx) return false
+            if (kotlin.math.abs(otherIdx - codeIdx) > 3) return false
+            val b = lines[otherIdx].boundingBox ?: return true
+            val cIdxBox = lines[codeIdx].boundingBox
+            if (cIdxBox != null && codeBoxTop != null) {
+                return kotlin.math.abs(b.top.toFloat() - codeBoxTop) <= 400f
+            }
+            return true
+        }
+
+        // 窗口内的行（按 y 排序，从码行下方优先——地址/取件说明通常在码下方）
+        val windowLines = lines
+            .filterIndexed { i, _ -> inWindow(i) }
+            .sortedBy { it.boundingBox?.top ?: 0 }
+        if (windowLines.isEmpty()) return ""
+        val windowText = windowLines.joinToString(" ") { it.text }
+
+        // 优先级 1：S6 「到…取件/取用」句式（通知体最常见的地址锚点）
+        // 地址可能跨行（LINE8“…到育新路与季庄街…社区卫生” + LINE9“所对面2号柜H36…取您的快递”）
+        // 仅在本码 ±3 行的窗口内找；含「到」即尝试（同码头尾地址常在码行，无需同行的取件词）
+        val lo = (codeIdx - 3).coerceAtLeast(0)
+        val hi = (codeIdx + 3).coerceAtMost(lines.lastIndex)
+        for (i in lo..hi) {
+            val t = lines[i].text
+            if (!t.contains("到")) continue
+            // 单行先试（排除"到达/已到达"动词：捕获以"达"开头说明是"到达xx"误抽，非地址介词"到"）
+            ADDR_AFTER_TO.find(t)?.let { m6 ->
+                val clean0 = m6.groupValues[1].trim().replace(PING_NOISE_TRAIL, "").trim()
+                if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(80)
+            }
+            // 跨行向下拼接 1~3 行
+            for (span in 1..3) {
+                if (i + span >= lines.size) break
+                val combined = (i..i + span).joinToString("") { lines[it].text }
+                ADDR_AFTER_TO.find(combined)?.let { m6b ->
+                    val clean0 = m6b.groupValues[1].trim().replace(PING_NOISE_TRAIL, "").trim()
+                    if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(80)
+                }
+            }
+        }
+
+        // 优先级 2：地址: 标签
+        // 优先级 2：地址: 标签（含退化标签补全——如 地址:育新路育新路育 时取下方干净地址行）
+        val labLine = windowLines.firstOrNull { it.text.contains(Regex("地址[:：]")) }
+        if (labLine != null) {
+            val a0 = cleanAddress(ADDR_LABEL.find(labLine.text)?.groupValues?.get(1).orEmpty())
+            if (isAddressLike(a0) && a0.length >= 4) {
+                // 前缀命中同行更完整行 或 同前缀更长行
+                val p4 = a0.substring(0, 4)
+                val byPrefix = windowLines.map { it.text.trim() }
+                    .filter { it.length > a0.length && it.startsWith(p4) && isAddressLike(it) }
+                    .maxByOrNull { it.length }
+                if (byPrefix != null) return byPrefix.take(80)
+            }
+            // 标签值退化/短时：取标签行下方邻近的干净完整地址（同一通知卡片区域）
+            val labY = labLine.boundingBox?.let { it.top.toFloat() } ?: 0f
+            val nearby = windowLines
+                .filter { tl ->
+                    val y = tl.boundingBox?.let { it.top.toFloat() } ?: 0f
+                    y > labY && y - labY < 300f && tl.text.trim().length > a0.length
+                }
+                .map { it.text.trim() }
+                .filter { it.length >= 4 && isAddressLike(it) }
+                .maxByOrNull { it.length }
+            if (nearby != null) return nearby.take(80)
+            if (isAddressLike(a0)) return a0.take(80)
+        }
+
+        // 优先级 3：窗口内最长的像地址行
+        val best = windowLines
+            .map { it.text.trim() }
+            .filter { isAddressLike(it) }
+            .maxByOrNull { it.length }
+        return best?.take(80) ?: ""
+    }
+
     /** Backward-compatible: return address string from structured location. */
     fun extractAddress(lines: List<OCREngine.TextLine>, allText: String): String {
         return extractLocation(lines, allText).fullAddress
@@ -888,7 +993,7 @@ object CodeExtractor {
         return listOf("展开", "复制", "拨打", "导航", "订阅", "延长收货", "查看物流", "确认收货").none { t.contains(it) }
     }
 
-    private data class Candidate(val code: String, val type: CodeType, val score: Float, val source: String)
+    private data class Candidate(val code: String, val type: CodeType, val score: Float, val source: String, val strong: Boolean = false)
 
     private fun posBonus(line: OCREngine.TextLine, screenHeight: Int): Float {
         val box = line.boundingBox ?: return 0f

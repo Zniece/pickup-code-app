@@ -331,7 +331,10 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 conflicts.add(code)
             }
 
-            saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, source, address)
+            // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
+            val perCodeAddr = CodeExtractor.extractAddressForCode(ocrLines, code)
+            saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, source,
+                perCodeAddr.ifBlank { address })
         }
 
         // 有冲突时通知用户自行判断

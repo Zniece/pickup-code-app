@@ -330,13 +330,16 @@ object ShareReceiver {
         }
 
         for (result in allResults) {
+            // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
+            val perCodeAddr = CodeExtractor.extractAddressForCode(lines, result.code)
+            val effAddr = perCodeAddr.ifBlank { address }
             // H6: 统一去重改为事务内原子化 saveOrUpdate（分享/无障碍/手动并发不再产生重复行）
             val save = db.codeHistoryDao().saveOrUpdate(CodeHistory(
                 code = result.code,
                 type = result.type.name,
                 source = result.source,
                 rawTextSnippet = rawSnippet,
-                pickupAddress = address,
+                pickupAddress = effAddr,
                 screenshotPath = screenshotPath,
                 shareSourcePkg = shareSourcePkg,
                 shareSourceName = shareSourceName,
