@@ -113,6 +113,7 @@ class MainActivity : ComponentActivity() {
                         hasNotificationPermission = hasNotificationPermission,
                         isAccessibilityEnabled = isAccessibilityEnabled,
                         hideAccessibilityCard = settings.hideAccessibilityCard,
+                        hideGuideCard = settings.hideGuideCard,
                         onRequestNotificationPermission = {
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                                 notificationPermissionLauncher.launch(
@@ -124,6 +125,11 @@ class MainActivity : ComponentActivity() {
                         onHideAccessibilityCard = {
                             lifecycleScope.launch(Dispatchers.IO) {
                                 AppPreferences.setHideAccessibilityCard(this@MainActivity, true)
+                            }
+                        },
+                        onHideGuideCard = {
+                            lifecycleScope.launch(Dispatchers.IO) {
+                                AppPreferences.setHideGuideCard(this@MainActivity, true)
                             }
                         },
                         onSettingsClick = { currentScreen = Screen.Settings },
@@ -254,9 +260,11 @@ fun MainScreen(
     hasNotificationPermission: Boolean,
     isAccessibilityEnabled: Boolean,
     hideAccessibilityCard: Boolean,
+    hideGuideCard: Boolean,
     onRequestNotificationPermission: () -> Unit,
     onEnableAccessibility: () -> Unit,
     onHideAccessibilityCard: () -> Unit,
+    onHideGuideCard: () -> Unit,
     onSettingsClick: () -> Unit,
     onItemClick: (Long) -> Unit,
     onFabClick: () -> Unit,
@@ -274,8 +282,6 @@ fun MainScreen(
     var dedupCount by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var typeFilter by remember { mutableStateOf("all") } // all / food / parcel / coupon
-    // C1 引导卡可关闭（本地状态，关闭后本轮不再显示）
-    var hideGuideCard by remember { mutableStateOf(false) }
 
     // 按搜索词 + 类型筛选
     val filteredHistory = remember(activeHistory, searchQuery, typeFilter) {
@@ -398,7 +404,7 @@ fun MainScreen(
                 }
             }
 
-            // C1: 多入口使用引导卡（弱化无障碍依赖，突出分享/通知/手动；可关闭）
+            // C1: 多入口使用引导卡（弱化无障碍依赖，突出分享/通知/手动；持久化可关闭）
             if (!hideGuideCard) {
             item {
                 Card(
@@ -408,7 +414,7 @@ fun MainScreen(
                     Column(Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("📥 怎么添加取件码，取餐码，券码？", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
-                            IconButton(onClick = { hideGuideCard = true }, modifier = Modifier.size(28.dp)) {
+                            IconButton(onClick = onHideGuideCard, modifier = Modifier.size(28.dp)) {
                                 Icon(Icons.Default.Close, contentDescription = "隐藏", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
