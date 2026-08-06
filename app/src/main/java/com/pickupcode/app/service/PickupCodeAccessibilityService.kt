@@ -15,6 +15,8 @@ import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.AddressExtractor
+import com.pickupcode.app.extractor.BrandResolver
 import com.pickupcode.app.extractor.CouponDetector
 import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
@@ -287,7 +289,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
 
         // Extract address (parcel scenario)
-        val address = CodeExtractor.extractAddress(ocrLines, allText)
+        val address = AddressExtractor.extractAddress(ocrLines, allText)
 
         // Map verification (async, fire-and-forget)
         if (settings.enableMapVerify && address.isNotBlank()) {
@@ -332,7 +334,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             }
 
             // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
-            val perCodeAddr = CodeExtractor.extractAddressForCode(ocrLines, code)
+            val perCodeAddr = AddressExtractor.extractAddressForCode(ocrLines, code)
             // raw 应存 OCR 全文（误报反馈/详情页展示依赖），不能用触发标签（source）
             saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, allText,
                 perCodeAddr.ifBlank { address })
@@ -345,7 +347,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
         // 快递100 验证：识别到取件码时，用运单号反查取件码/地址作为标准答案，对照 OCR 结果（fire-and-forget）
         if (settings.enableKuaidi100 && settings.kuaidi100Key.isNotBlank()) {
-            val trackingNum = CodeExtractor.findOrderNumber(allText)
+            val trackingNum = BrandResolver.findOrderNumber(allText)
             if (trackingNum != null) {
                 scope.launch {
                     val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum, Kuaidi100Verifier.guessCourierCode(trackingNum))

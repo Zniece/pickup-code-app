@@ -85,7 +85,7 @@ object Kuaidi100Verifier {
      * 快递100 com 码参考其官方对照表。
      */
     fun guessCourierCode(trackingNum: String): String? {
-        val brand = com.pickupcode.app.extractor.CodeExtractor.guessOrderBrand(trackingNum) ?: return null
+        val brand = com.pickupcode.app.extractor.BrandResolver.guessOrderBrand(trackingNum) ?: return null
         return BRAND_TO_KUAIDI100[brand]
     }
 
