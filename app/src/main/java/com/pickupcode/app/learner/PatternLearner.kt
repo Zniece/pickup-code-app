@@ -339,12 +339,13 @@ object PatternLearner {
         return fresh
     }
 
-    /** 判断某码值是否命中已学习的排除片段（供 CodeExtractor 识别时剔除）。 */
+    /** 判断某码值是否命中已学习的排除项（供 CodeExtractor 识别时剔除）。
+     * 用完整值匹配而非 contains 子串：排除 "42" 不应误杀 "9421"/"421" 这类合法码。 */
     fun isLearnedExcluded(code: String, context: Context?): Boolean {
         if (context == null) return false
         val excludes = cachedLearnedExcludes(context)
         if (excludes.isEmpty()) return false
-        return excludes.any { ex -> code.contains(ex, ignoreCase = true) }
+        return excludes.any { ex -> code.equals(ex, ignoreCase = true) }
     }
 
     // ---------------------------------------------------------------
