@@ -12,6 +12,8 @@ import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.AddressExtractor
+import com.pickupcode.app.extractor.BrandResolver
 import com.pickupcode.app.extractor.CouponDetector
 import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
@@ -211,7 +213,7 @@ object ShareReceiver {
         }.filter { it.text.isNotBlank() }
         if (lines.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
-        val address = CodeExtractor.extractAddress(lines, allText)
+        val address = AddressExtractor.extractAddress(lines, allText)
         extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address, scope, shareSource = shareSource)
     }
 
@@ -260,7 +262,7 @@ object ShareReceiver {
         // 无 OCR 文本且无券码 → 无内容
         if (lines.isEmpty() && coupons.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
-        val address = CodeExtractor.extractAddress(lines, allText)
+        val address = AddressExtractor.extractAddress(lines, allText)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
         extractAndNotify(context, lines, snippet, screenshotPath, address, scope, coupons, shareSource)
     }
@@ -331,7 +333,7 @@ object ShareReceiver {
 
         for (result in allResults) {
             // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
-            val perCodeAddr = CodeExtractor.extractAddressForCode(lines, result.code)
+            val perCodeAddr = AddressExtractor.extractAddressForCode(lines, result.code)
             val effAddr = perCodeAddr.ifBlank { address }
             // 原始去重语义：查重后照常新增，让同一码多次保存产生多行，进「重复值整理」手动整理
             val save = db.codeHistoryDao().insertCheckDuplicate(CodeHistory(
@@ -388,7 +390,7 @@ object ShareReceiver {
 
         // 快递100 反向验证：识别到运单号时反查取件码/地址作为标准答案（fire-and-forget，与无障碍路径一致）
         if (settings.enableKuaidi100 && settings.kuaidi100Key.isNotBlank()) {
-            val trackingNum = CodeExtractor.findOrderNumber(allText)
+            val trackingNum = BrandResolver.findOrderNumber(allText)
             if (trackingNum != null) {
                 scope.launch(Dispatchers.IO) {
                     try {
