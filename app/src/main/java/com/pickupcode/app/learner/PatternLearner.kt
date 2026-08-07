@@ -132,6 +132,8 @@ object PatternLearner {
     data class PickupPoint(val name: String, val count: Int, val lastUsedAt: Long)
 
     /** 记录一次取件地址出现（识别/标记已取时调用），用于归并"常用取件点"。 */
+    // B13: read-modify-write 需原子化——识别线程与详情页「标记已取」可并发调用，无锁会丢失计数
+    @Synchronized
     fun registerPickupPoint(context: Context, address: String) {
         if (address.isBlank()) return
         val key = address.trim()
