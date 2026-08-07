@@ -115,7 +115,9 @@ object ShareReceiver {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(Intent.EXTRA_REFERRER)
                 }
-                if (referrer != null && !referrer.host.isNullOrBlank()) pkg = referrer.host ?: ""
+                // B2: host 可能是任意字符串（非包名），须校验已安装，否则后续 getLaunchIntentForPackage 静默返回 null
+                val host = referrer?.host
+                if (!host.isNullOrBlank() && isPackageInstalled(pm, host)) pkg = host
             } catch (_: Exception) {
             }
         }

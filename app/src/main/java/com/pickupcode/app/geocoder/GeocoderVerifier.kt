@@ -189,10 +189,12 @@ object GeocoderVerifier {
                     else -> 0f
                 }
 
+                // B5: optString(key, null) 在 key 缺失时返回字面量 "null"，须用 isNull 判缺失
+                fun optNullable(key: String): String? =
+                    if (best.isNull(key)) null else best.optString(key)
                 GeocodedResult(
                     address = address,
-                    formattedAddress = best.optString("formatted_address", null)
-                        ?: best.optString("name", null),
+                    formattedAddress = optNullable("formatted_address") ?: optNullable("name"),
                     latitude = lat,
                     longitude = lon,
                     verified = hasLatLon,

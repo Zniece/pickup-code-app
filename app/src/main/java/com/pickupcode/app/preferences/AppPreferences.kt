@@ -1,11 +1,19 @@
 package com.pickupcode.app.preferences
 
 import android.content.Context
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import java.security.KeyStore
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
 
 /** 应用级单例 DataStore（对应文件 settings.preferences_pb，随 App 数据目录保存）。 */
 val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "settings")
@@ -16,9 +24,9 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
  * 所有设置项的读写统一走本对象：读取用 [observe] 订阅 Flow（UI 组合期 collectAsState），
  * 写入用对应的 setXxx 方法。Key 名与默认值在此单一维护，新增设置项需同步 [Settings] 与 [observe]。
  *
- * 安全说明：API Key（AI / 高德 / 快递100）以明文存于 DataStore。
- * 对本地单机工具 App 可接受；若在意反编译泄露，可迁移到 EncryptedSharedPreferences
- * （升级时需把旧明文值读入并写入加密存储，属架构级改动，暂缓）。
+ * 安全说明：API Key（AI / 高德 / 快递100）经 AndroidKeyStore AES-GCM 加密后存 DataStore
+ * （B6）。密钥在 Keystore 内不可导出；备份恢复/换机后密钥丢失，旧密文解密失败按空值处理，
+ * 用户需重新输入。首次升级自动解密旧明文（非 "v1:" 前缀视为明文原样返回）。
  */
 object AppPreferences {
 
@@ -102,16 +110,16 @@ object AppPreferences {
                 enableParcelCodes = prefs[KEY_ENABLE_PARCEL] ?: true,
                 enableCouponCodes = prefs[KEY_ENABLE_COUPON] ?: true,
                 darkMode = prefs[KEY_DARK_MODE] ?: "system",
-                apiKey = prefs[KEY_API_KEY] ?: "",
+                apiKey = decrypt(prefs[KEY_API_KEY] ?: ""),
                 apiBaseUrl = prefs[KEY_API_BASE_URL] ?: "https://api.openai.com/v1",
                 apiModel = prefs[KEY_API_MODEL] ?: "gpt-4o-mini",
                 enableAI = prefs[KEY_ENABLE_AI] ?: true,
                 enableIntentReceive = prefs[KEY_ENABLE_INTENT_RECEIVE] ?: true,
                 enableShareDetection = prefs[KEY_ENABLE_SHARE_DETECTION] ?: true,
                 enableMapVerify = prefs[KEY_ENABLE_MAP_VERIFY] ?: false,
-                amapApiKey = prefs[KEY_AMAP_API_KEY] ?: "",
+                amapApiKey = decrypt(prefs[KEY_AMAP_API_KEY] ?: ""),
                 enableKuaidi100 = prefs[KEY_ENABLE_KUAIDI100] ?: false,
-                kuaidi100Key = prefs[KEY_KUAIDI100_KEY] ?: "",
+                kuaidi100Key = decrypt(prefs[KEY_KUAIDI100_KEY] ?: ""),
                 hideAccessibilityCard = prefs[KEY_HIDE_ACCESSIBILITY_CARD] ?: false,
                 hideGuideCard = prefs[KEY_HIDE_GUIDE_CARD] ?: false
             )
@@ -139,7 +147,7 @@ object AppPreferences {
     }
 
     suspend fun setApiKey(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_API_KEY] = value }
+        context.dataStore.edit { it[KEY_API_KEY] = encrypt(value) }
     }
 
     suspend fun setApiBaseUrl(context: Context, value: String) {
@@ -167,7 +175,7 @@ object AppPreferences {
     }
 
     suspend fun setAmapApiKey(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_AMAP_API_KEY] = value }
+        context.dataStore.edit { it[KEY_AMAP_API_KEY] = encrypt(value) }
     }
 
     suspend fun setEnableKuaidi100(context: Context, value: Boolean) {
@@ -175,7 +183,7 @@ object AppPreferences {
     }
 
     suspend fun setKuaidi100Key(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_KUAIDI100_KEY] = value }
+        context.dataStore.edit { it[KEY_KUAIDI100_KEY] = encrypt(value) }
     }
 
     suspend fun setHideAccessibilityCard(context: Context, value: Boolean) {
@@ -184,5 +192,66 @@ object AppPreferences {
 
     suspend fun setHideGuideCard(context: Context, value: Boolean) {
         context.dataStore.edit { it[KEY_HIDE_GUIDE_CARD] = value }
+    }
+
+    // ---------------------------------------------------------------
+    // B6: API Key 加密（AndroidKeyStore AES-GCM，密文存 DataStore）
+    // ---------------------------------------------------------------
+
+    private const val KEYSTORE_ALIAS = "pickup_code_keys"
+    private const val ENC_PREFIX = "v1:"
+    private val AES_TRANSFORM = "AES/GCM/NoPadding"
+
+    /** 取/生成 Keystore 内不可导出的 AES 密钥（备份恢复后密钥丢失→解密失败按空值处理）。 */
+    private fun keystoreKey(): SecretKey? = try {
+        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+        (ks.getKey(KEYSTORE_ALIAS, null) as? SecretKey) ?: run {
+            val g = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+            g.init(
+                KeyGenParameterSpec.Builder(
+                    KEYSTORE_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .build()
+            )
+            g.generateKey()
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+    /** 加密明文；空串原样返回（保持默认值语义）；Keystore 不可用时回退明文（设置不彻底不可用）。 */
+    private fun encrypt(plain: String): String {
+        if (plain.isEmpty()) return plain
+        return try {
+            val cipher = Cipher.getInstance(AES_TRANSFORM)
+            cipher.init(Cipher.ENCRYPT_MODE, keystoreKey() ?: return plain)
+            val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
+            ENC_PREFIX + Base64.encodeToString(cipher.iv, Base64.NO_WRAP) +
+                "." + Base64.encodeToString(ct, Base64.NO_WRAP)
+        } catch (_: Exception) {
+            plain
+        }
+    }
+
+    /** 解密存储值；非密文（旧明文/空）原样返回，密钥丢失/损坏返回空串。 */
+    private fun decrypt(stored: String): String {
+        if (stored.isEmpty() || !stored.startsWith(ENC_PREFIX)) return stored
+        return try {
+            val body = stored.removePrefix(ENC_PREFIX)
+            val parts = body.split(".", limit = 2)
+            if (parts.size != 2) return ""
+            val cipher = Cipher.getInstance(AES_TRANSFORM)
+            cipher.init(
+                Cipher.DECRYPT_MODE,
+                keystoreKey() ?: return "",
+                GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
+            )
+            String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
+        } catch (_: Exception) {
+            ""
+        }
     }
 }
