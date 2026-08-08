@@ -131,6 +131,11 @@ fun CodeDetailScreen(
                 )
             }
 
+            if (item.cabinetNumber.isNotBlank()) {
+                EditableField(label = "柜号", value = item.cabinetNumber, displayFontSize = 16.sp,
+                    onSave = { onUpdated(item.copy(cabinetNumber = it)) })
+            }
+
             if (item.pickupAddress.isNotBlank()) {
                 EditableField(label = "取件地址", value = item.pickupAddress, displayFontSize = 16.sp,
                     onSave = { onUpdated(item.copy(pickupAddress = it)) },

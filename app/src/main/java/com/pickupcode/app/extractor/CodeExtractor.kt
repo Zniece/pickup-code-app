@@ -31,8 +31,11 @@ object CodeExtractor {
     private val PREFIXED_CODE = Regex("(取[餐件货单]码|取餐号|取单号|排号|券号|提取码)[:：]?\\s*(?:为|是)?\\s*([A-Za-z0-9\\-]{2,12})")
     // 菜鸟/驿站类通知标准句式：凭1-6-5020到...取（件）；容忍 OCR 在码值与方位词间插入空格
     private val PING_CODE = Regex("(?:凭|好评码|提取码|券号)[:：]?\\s*([A-Za-z0-9\\-]{2,12}?)\\s*(?=(?:到|至|去|领|取|在|格|号柜|菜鸟|驿站|快递柜))", RegexOption.IGNORE_CASE)
-    private val ADDR_PIPE_FULL = Regex("[路街巷弄号栋幢单元柜室楼区县镇乡村庄]")
-    private val ADDR_LANDMARK = Regex("(菜鸟|驿站|快递柜|丰巢|超市|诊所|对面|门口|小区|大厦|医院|银行|学校|商场)")
+    // 地址指示符（isAddressLike 核心判断）：合并反编译 App sources extractAddress 的 30+ 地标词表，
+    // 覆盖 店/铺/站/点/园/苑/广场/中心/公寓/写字楼 等常见地址结尾，减少 S10 兜底漏抓真实地址。
+    // 注意保留“元”仅在“单元”语境（见 isAddressLike 的 bareYuanOnly 处理）。
+    private val ADDR_PIPE_FULL = Regex("[路街巷弄号栋幢单元柜室楼区县镇乡村庄店铺站点园苑院屋所广场中心商厦厦居宅房寓庭墅阁舍江河港湾门口岸桥山岭岗场]")
+    private val ADDR_LANDMARK = Regex("(菜鸟|驿站|快递柜|丰巢|超市|诊所|对面|门口|小区|大厦|医院|银行|学校|商场|广场|中心|公寓|写字楼|工业园|科技园|物流园|产业园|代收点|便利店|商行|门面|花园|家园|宿舍|中学|孵化园)")
     private val ADDR_AFTER_TO = Regex("到(.+?)(领取|取件|门店|取运单尾号|取运单|取您|取你的|取貨|取货|取走|取你)")
     private val ADDR_LABEL = Regex("地址[:：]\\s*(.+)")
     private val ADDR_PLACED = Regex("(?:已放至|已暂存至|已放入|送达)\\s*([^，,。.\\n]{4,80})")
@@ -143,14 +146,114 @@ object CodeExtractor {
         Regex("\\b\\d+(?:\\.\\d+)?\\s*(?:ml|ML|mL|l|L|g|kg|mg|cm|mm|km|GB|MB|KB|TB)\\b"),
         Regex("\\b\\d{4}-\\d{1,2}\\b"), // date suffix like 1124-15
         Regex("\\b\\d{6,8}-\\d{5,}\\b"), // full order number
-        Regex("\\b[xX]\\d{1,2}\\b") // shopping cart quantity marker (x1, x2, ...) — not a pickup code
+        Regex("\\b[xX]\\d{1,2}\\b"), // shopping cart quantity marker (x1, x2, ...) — not a pickup code
+        // --- 借鉴反编译 App SmsParser.isInterferenceCode 增强干扰排除 ---
+        // URL 碎片（http/https/ftp 开头的链接残片）
+        Regex("https?://\\S*"), Regex("ftp://\\S*"),
+        // 域名模式（xxx.com / xxx.cn / xxx.net 等，OCR 常读到的纯数字假域名也在此类）
+        Regex("(?:[a-zA-Z0-9-]+\\.)+(?:com|cn|net|org|top|xyz|io|cc|me|tv|edu|gov)(?:/[a-zA-Z0-9-_?=&#.]*)?"),
+        // 运单号/快递单号模式（纯数字10-25位，排除被当成取件码的运单号）
+        Regex("\\b\\d{10,25}\\b"),
+        // 快递品牌 + 码 + 包裹 干扰（如"中通123456包裹"、"顺丰800123包裹(?!位置)"—SmsParser 防误判）
+        Regex("(?:中通|圆通|申通|韵达|顺丰|邮政|EMS|极兔|京东|德邦|百世|菜鸟|丰巢)\\s*[A-Za-z0-9\\-]{3,12}\\s*包裹(?!位置)"),
+        // 包裹编号/包裹号/包裹# 干扰（如"包裹编号1234"、"包裹*1234"—SmsParser 防误判）
+        Regex("包裹(?:编号|号|[*＊:：#])\\s*[A-Za-z0-9\\-]{2,12}"),
+        // 车位/车库/号楼/栋/单元 后缀 —— 数字+地点后缀不是取件码（如"42车位"、"2栋"）
+        Regex("\\d+\\s*(?:车位|车库|号楼|栋|单元|层|室|户|号院)"),
+        // 尾号/运单号/单号 + 数字 干扰（如"运单尾号 6824"、"单号123456"）
+        Regex("(?:尾号|运单号|单号|订单号)\\s*[:：]?\\s*\\d+"),
+        // 客服电话/400电话（如 400-xxx-xxxx、95338 等）
+        Regex("\\b\\d{3,5}-\\d{3,5}-\\d{4}\\b"),
+        // 取件时间段（如"8:00-21:00"、"9-21点"）——不是取件码
+        Regex("\\d{1,2}[:：]\\d{2}\\s*[-~～]\\s*\\d{1,2}[:：]\\d{2}"),
+        // 纯日期（MM-DD 如 08-05）——不是取件码
+        Regex("\\b(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\\d|3[01])\\b")
     )
+
+    // ---------------------------------------------------------------
+    // 文本预处理：全角→半角归一化（借鉴反编译 App normalizeText）
+    // OCR 有时会把数字/符号读成全角（如 ０１２３、：、，），导致正则匹配失败。
+    // 参考 SmsParser.normalizeText 的逐字符转换表，在识别前统一归一化。
+    // ---------------------------------------------------------------
+
+    /** 全角数字 → 半角映射 */
+    private val FULLWIDTH_DIGITS = mapOf(
+        '０' to '0', '１' to '1', '２' to '2', '３' to '3', '４' to '4',
+        '５' to '5', '６' to '6', '７' to '7', '８' to '8', '９' to '9'
+    )
+
+    /**
+     * 归一化 OCR 文本：全角转半角 + 压缩空白（借鉴反编译 App SmsParser.normalizeText）。
+     * 逐字符遍历，把全角数字/符号/空格转为半角等价物，然后把制表符/换行转空格，
+     * 最后压缩连续空白为单个空格、去首尾空白。
+     */
+    fun normalizeText(text: String): String {
+        val sb = StringBuilder(text.length)
+        for (ch in text) {
+            when (ch) {
+                '\t', '\n', '\r' -> sb.append(' ')
+                '_', '~' -> sb.append('-')
+                '（' -> sb.append('(')       // 全角左括号 （
+                '）' -> sb.append(')')        // 全角右括号 ）
+                '，' -> sb.append(',')         // 全角逗号 ，
+                '；' -> sb.append(';')         // 全角分号 ；
+                '：' -> sb.append(':')         // 全角冒号 ：
+                '～', '–', '—' -> sb.append('-')  // ～ – —
+                '　' -> sb.append(' ')          // 全角空格
+                '【' -> sb.append('[')          // 【
+                '】' -> sb.append(']')          // 】
+                '－' -> sb.append('-')          // 全角减号 －
+                '、' -> sb.append(',')          // 、
+                '。' -> sb.append('.')          // 。
+                '．' -> sb.append('.')          // 全角句号 ．
+                else -> {
+                    val d = FULLWIDTH_DIGITS[ch]
+                    if (d != null) sb.append(d) else sb.append(ch)
+                }
+            }
+        }
+        // 压缩连续空白为单个空格，去首尾
+        return sb.toString().replace(Regex("\\s+"), " ").trim()
+    }
+
+    // ---------------------------------------------------------------
+    // 金融/支付短信相关性拦截（借鉴反编译 App isExpressRelatedSms）
+    // 银行、支付类通知的截图/短信里常出现数字（金额、验证码、余额），极易被当成取件码。
+    // 规则：命中金融词且未命中快递词 → 判定为金融噪音，整段不识别。
+    // ---------------------------------------------------------------
+
+    /** 金融/支付强信号词：出现即高度怀疑是非取件的资金类通知。 */
+    private val FINANCIAL_KEYWORDS = listOf(
+        "银行", "信用卡", "借记卡", "储蓄卡", "账户", "出账", "入账", "到账", "余额",
+        "支付宝", "微信支付", "财付通", "账单", "消费", "转账", "退款", "还款",
+        "支付", "人民币", "收付款", "手续费", "交易", "红包到账", "零钱", "花呗", "借呗"
+    )
+
+    /** 快递/取件强信号词：与金融词对冲，命中则说明可能是含支付信息的取件通知。 */
+    private val EXPRESS_SIGNAL_KEYWORDS = listOf(
+        "取件", "快递", "包裹", "驿站", "代收点", "货栈", "柜", "提货", "开箱", "运单", "取餐", "取餐码"
+    )
+
+    /**
+     * 判断一段文本是否为金融/支付类噪音（非取件场景）。
+     * 命中金融词且没有快递/取件信号词 → true（应拦截）。
+     * 同时命中两者 → false（可能是取件通知里带支付提醒，放行）。
+     */
+    fun isFinancialNoise(text: String): Boolean {
+        if (text.isBlank()) return false
+        val hasFinancial = FINANCIAL_KEYWORDS.any { text.contains(it, ignoreCase = true) }
+        if (!hasFinancial) return false
+        val hasExpressSignal = EXPRESS_SIGNAL_KEYWORDS.any { text.contains(it, ignoreCase = true) }
+        return !hasExpressSignal
+    }
 
     // ---------------------------------------------------------------
     // Code extraction
     // ---------------------------------------------------------------
 
     fun extract(lines: List<OCREngine.TextLine>, screenHeight: Int = 0, context: Context? = null, source: String = "screen"): List<ExtractedCode> {
+        // 文本预处理：全角→半角归一化（借鉴反编译 App normalizeText）
+        val lines = lines.map { it.copy(text = normalizeText(it.text)) }
         val candidates = mutableListOf<Candidate>()
         val allText = lines.joinToString(" ") { it.text }
         val isFoodContext = FOOD_KEYWORDS.any { allText.contains(it, ignoreCase = true) }
@@ -360,10 +463,20 @@ object CodeExtractor {
     // ---------------------------------------------------------------
 
     fun extractLocation(lines: List<OCREngine.TextLine>, allText: String): PickupLocation {
+        return extractLocation(lines, allText, null)
+    }
+
+    /** 增强版：context 非空时优先匹配用户常用站点（借鉴反编译 App setCommonStations）。 */
+    fun extractLocation(lines: List<OCREngine.TextLine>, allText: String, context: android.content.Context?): PickupLocation {
         var stationName = ""
         var fullAddress = ""
         var cabinet: String? = null
         var addrFrom = "none"
+
+        // 常用站点缓存（context 非空时读取，供 S1b 分支使用）
+        val commonStations = if (context != null)
+            com.pickupcode.app.learner.CommonStationStore.getCommonStations(context)
+        else emptyList()
 
         // S-Coupon: 券码/到店券的门店识别（最高优先级）
         // 场景：外卖/到店券（德克士、蜜雪冰城等）截图，用户要的是“适用门店”（如 蜜雪冰城(老十字街店)），
@@ -568,6 +681,21 @@ object CodeExtractor {
                     fullAddress = a.take(80)
                     addrFrom = "S0c-column"
                     if (stationName.isEmpty()) stationName = extractStationName(a)
+                }
+            }
+        }
+
+        // S1b: 常用站点优先匹配（context 非空且有缓存时）——命中用户常去的驿站/快递柜/取件点，
+        // 直接作为最可靠地址信号。放在 S0 显式标签之后、通用正侧之前；标签优先，其次常用站点。
+        if (fullAddress.isEmpty() && commonStations.isNotEmpty()) {
+            for (line in lines) {
+                val t = line.text.trim()
+                val hit = commonStations.firstOrNull { t.contains(it.name, ignoreCase = true) }
+                if (hit != null) {
+                    fullAddress = t.take(80)
+                    addrFrom = "S1b-common"
+                    if (stationName.isEmpty()) stationName = hit.name
+                    break
                 }
             }
         }
@@ -891,6 +1019,30 @@ object CodeExtractor {
         return extractLocation(lines, allText).fullAddress
     }
 
+    /** context 非空时优先匹配用户常用站点后的地址字符串。 */
+    fun extractAddress(lines: List<OCREngine.TextLine>, allText: String, context: android.content.Context?): String {
+        return extractLocation(lines, allText, context).fullAddress
+    }
+
+    /**
+     * 独立柜号提取（借鉴反编译 App extractCabinetInfo）：从取件文本里抓柜号/格口，
+     * 如 2号柜、5号副柜、云柜12号、12号格口、A区3号柜。返回规范化串（含“柜/格口”后缀），
+     * 无则空串。供入库时作为独立 cabinetNumber 字段保存（区别于拼进地址尾部）。
+     */
+    fun extractCabinetNumber(lines: List<OCREngine.TextLine>, allText: String): String {
+        val texts = lines.map { it.text }.filter { it.isNotBlank() }
+        // 优先整行完整柜号：X号[副/主]柜 / 云柜X号 / X号格口
+        for (t in texts) {
+            val m = Regex("(\\d+号(?:副|主)?柜|云柜\\d+号\\d+号格口|\\d+号格口|\\d+号丰巢柜|\\d+号[\\u4e00-\\u9fa5]{0,4}柜)")
+                .find(t) ?: continue
+            val v = m.value
+            if (v.length <= 12) return v
+        }
+        // 兜底：纯 X号柜
+        val plain = CABINET_NUM.find(allText)
+        return if (plain != null && plain.groupValues[1].length <= 6) plain.groupValues[1] + "号柜" else ""
+    }
+
     // ---------------------------------------------------------------
     // Station helpers
     // ---------------------------------------------------------------
@@ -1177,11 +1329,34 @@ object CodeExtractor {
     /**
      * 公开：校验字符串是否为合法取餐/取件码格式（复用全部已知规则）。
      * 供 AI 提取结果过滤噪声（AI 不比正则可靠，需格式白名单把关）。
+     * 增强版（借鉴反编译 App SmsParser.isValidPickupCode 的 11 项过滤）：先做格式匹配，
+     * 再做内容排除（全零全一/递增序列/4连重复/xxx/手机号/拼音噪声等）。
      */
     fun isValidPickupCode(code: String): Boolean {
         val c = code.trim()
         if (c.length !in 1..14) return false
-        return VALID_CODE_FORMATS.any { it.matches(c) }
+        // 第一步：格式白名单匹配（原有检查）
+        if (!VALID_CODE_FORMATS.any { it.matches(c) }) return false
+        // 第二步：内容排除（借鉴反编译 App，过滤噪声数字模式）
+        val stripped = c.replace("-", "").replace(" ", "")
+        val len = stripped.length
+        if (len < 3 || len > 20) return false
+        // 86 开头手机号子串
+        if (stripped.startsWith("86") && stripped.length in 8..13) return false
+        // 全 0 或全 1
+        if (stripped.all { it == '0' } || stripped.all { it == '1' }) return false
+        // 递增数字序列（0123 ~ 7890）——全串精确匹配，不用子串 contains 避免误杀（如 10123 包含 0123）
+        if (stripped.length == 4 && INCREMENTING_DIGITS.contains(stripped)) return false
+        // 递增字母序列（abcd ~ wxyz）——同样全串精确匹配
+        val lower = stripped.lowercase()
+        if (lower.length == 4 && INCREMENTING_LETTERS.contains(lower)) return false
+        // 含"手机/电话/时间"拼音噪声
+        if (listOf("手机", "电话", "时间", "shouji", "dianhua", "shijian").any { lower.contains(it) }) return false
+        // 4 连重复字符（aaaa、1111）
+        if (Regex("(.)\\1{3,}").containsMatchIn(stripped)) return false
+        // xxx 模式（占位/噪声）
+        if (Regex("[xX]{3,}").containsMatchIn(stripped)) return false
+        return true
     }
 
     // 合法取件/取餐码格式白名单（与上方解析正则一一对应，去锚点/去分组后用于全串匹配）
@@ -1195,11 +1370,20 @@ object CodeExtractor {
         Regex("\\d{6,8}"),                                            // LONG_NUMBER
         Regex("[A-Z]\\s*-?\\s*\\d{2,4}", RegexOption.IGNORE_CASE),  // LETTER_NUMBER_FOOD
         // PURE_NUMBER_FOOD：手动/AI 校验无上下文，收紧为 4-5 位，避免 2-3 位裸数字(42/123)被当合法码
-        Regex("\\d{4,5}")
+        Regex("\\d{4,5}"),
+        // PREFIXED_CODE / PING_CODE 格式：覆盖带前缀上下文的码值（如 取餐码AB12、凭1-6-5020 等）
+        Regex("[A-Za-z0-9\\-]{2,12}")
     )
+
+    /** 递增数字序列：排除 0123 / 1234 ... 7890 */
+    private val INCREMENTING_DIGITS = (0..7).map { (it..it + 3).joinToString("") }.toSet()
+
+    /** 递增字母序列：排除 abcd / bcde ... wxyz（大小写均匹配） */
+    private val INCREMENTING_LETTERS = ('a'..'w').map { (it..it + 3).joinToString("") }.toSet()
 
     private fun isExcluded(code: String, context: Context? = null) =
         EXCLUDE_PATTERNS.any { it.containsMatchIn(code) } ||
+        !isValidPickupCode(code) ||
         // A3: 用户标记"不是取件码"的可学习排除片段
         com.pickupcode.app.learner.PatternLearner.isLearnedExcluded(code, context)
 

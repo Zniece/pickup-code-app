@@ -10,6 +10,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
@@ -33,6 +36,17 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
     val s by AppPreferences.observe(ctx).collectAsState(initial = AppPreferences.Settings())
     var apiUrl by remember { mutableStateOf(s.apiBaseUrl) }
+
+    // 短信权限启动器：拒绝后开关自动回退
+    val smsPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            scope.launch(Dispatchers.IO) { AppPreferences.setEnableSmsReceive(ctx, true) }
+        } else {
+            Toast.makeText(ctx, "短信权限被拒绝，无法自动识别取件码", Toast.LENGTH_SHORT).show()
+        }
+    }
     var apiKey by remember { mutableStateOf(s.apiKey) }
     var apiModel by remember { mutableStateOf(s.apiModel) }
     var amapApiKey by remember { mutableStateOf(s.amapApiKey) }
@@ -79,6 +93,24 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item { Text("从其他App分享或拖放到本应用时自动识别", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             item { Switch("🔗 Intent 接收", sub = "接收来自其他App的分享（文本/图片）", checked = s.enableIntentReceive) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableIntentReceive(ctx, it) } } }
             item { Switch("📤 分享识别", sub = "文本选择菜单/拖放直达时自动识别取餐取件码", checked = s.enableShareDetection) { scope.launch(Dispatchers.IO) { AppPreferences.setEnableShareDetection(ctx, it) } } }
+            item { HorizontalDivider() }
+
+            item { Text("📨 短信识别", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+            item { Text("取件/取餐短信到达时自动识别取件码并入库（无需打开屏幕；需短信权限）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Switch("📨 短信取件码自动识别", sub = if (s.enableSmsReceive) "已开启" else "已关闭", checked = s.enableSmsReceive) { enable ->
+                if (enable) {
+                    // 开启时先检查权限，未授权则发起请求；已授权直接保存
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            ctx, android.Manifest.permission.RECEIVE_SMS
+                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                        scope.launch(Dispatchers.IO) { AppPreferences.setEnableSmsReceive(ctx, true) }
+                    } else {
+                        smsPermissionLauncher.launch(android.Manifest.permission.RECEIVE_SMS)
+                    }
+                } else {
+                    scope.launch(Dispatchers.IO) { AppPreferences.setEnableSmsReceive(ctx, false) }
+                }
+            } }
             item { HorizontalDivider() }
 
             item { Text("🔧 无障碍服务提示", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }

@@ -231,6 +231,14 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         val allResults = mutableListOf<Pair<String, CodeExtractor.CodeType>>()
         val codeSources = mutableMapOf<String, String>()
 
+        // 金融/支付噪音拦截：银行、支付、转账等通知截图/短信里常出现数字（金额/验证码/余额）
+        // 极易被当成取件码。命中金融词且无快递/取件信号词 → 整段不识别。
+        if (CodeExtractor.isFinancialNoise(allText)) {
+            Log.d(TAG, "金融/支付噪音文本，跳过识别")
+            showResult("未识别到取餐码/取件码（疑似银行/支付类通知）")
+            return
+        }
+
         // 券码：检测到二维码/条码并解码，code = 解码内容（不需要 OCR）
         var hasCoupon = false
         if (settings.enableCouponCodes) {
@@ -286,8 +294,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             }
         }
 
-        // Extract address (parcel scenario)
-        val address = CodeExtractor.extractAddress(ocrLines, allText)
+        // Extract address (parcel scenario) — context 非空时不通用，用于常用站点优先匹配
+        val address = CodeExtractor.extractAddress(ocrLines, allText, this)
 
         // Map verification (async, fire-and-forget)
         if (settings.enableMapVerify && address.isNotBlank()) {
@@ -333,8 +341,11 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
             // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
             val perCodeAddr = CodeExtractor.extractAddressForCode(ocrLines, code)
+            // 独立柜号（借鉴反编译 App extractCabinetInfo），入库时作为独立 cabinetNumber 字段
+            val perCabinet = if (type == CodeExtractor.CodeType.pickup_parcel)
+                CodeExtractor.extractCabinetNumber(ocrLines, allText) else ""
             saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, source,
-                perCodeAddr.ifBlank { address })
+                perCodeAddr.ifBlank { address }, perCabinet)
         }
 
         // 有冲突时通知用户自行判断
@@ -379,7 +390,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun saveCode(code: String, type: CodeExtractor.CodeType, source: String, screenshotPath: String, raw: String, address: String = "") {
+    private fun saveCode(code: String, type: CodeExtractor.CodeType, source: String, screenshotPath: String, raw: String, address: String = "", cabinet: String = "") {
         scope.launch {
             val db = AppDatabase.getInstance(this@PickupCodeAccessibilityService)
             val dao = db.codeHistoryDao()
@@ -391,9 +402,17 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 screenshotPath = screenshotPath,
                 rawTextSnippet = raw,
                 pickupAddress = address,
+                cabinetNumber = cabinet,
                 timestamp = System.currentTimeMillis()
             ))
             val id = save.id
+
+            // 常用站点学习：保存带地址的取件记录时，累计该站点出现频次，供后续地址识别优先匹配
+            if (type == CodeExtractor.CodeType.pickup_parcel && address.isNotBlank()) {
+                com.pickupcode.app.learner.CommonStationStore.recordCode(
+                    this@PickupCodeAccessibilityService, address, raw
+                )
+            }
 
             // 检测同 code 不同类型的重复值
             val otherType = if (type == CodeExtractor.CodeType.pickup_food)

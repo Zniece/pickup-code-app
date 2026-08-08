@@ -72,6 +72,9 @@ object AppPreferences {
     /** 主页「怎么添加取件码」引导卡是否已隐藏（永久） */
     private val KEY_HIDE_GUIDE_CARD = booleanPreferencesKey("hide_guide_card")
 
+    /** 是否接收短信取件码自动识别（需 READ_SMS 权限；借鉴反编译 App SmsReceiver）。 */
+    private val KEY_ENABLE_SMS_RECEIVE = booleanPreferencesKey("enable_sms_receive")
+
     /** 全部设置项的聚合快照：observe 的每次发射即一个不可变副本。 */
     data class Settings(
         val confidenceThreshold: Float = 0.5f,
@@ -90,7 +93,8 @@ object AppPreferences {
         val enableKuaidi100: Boolean = false,
         val kuaidi100Key: String = "",
         val hideAccessibilityCard: Boolean = false,
-        val hideGuideCard: Boolean = false
+        val hideGuideCard: Boolean = false,
+        val enableSmsReceive: Boolean = false
     )
 
     /** 订阅设置 Flow：任一 key 变化即发射新的 [Settings] 快照；UI 侧用 collectAsState 消费。 */
@@ -113,7 +117,8 @@ object AppPreferences {
                 enableKuaidi100 = prefs[KEY_ENABLE_KUAIDI100] ?: false,
                 kuaidi100Key = prefs[KEY_KUAIDI100_KEY] ?: "",
                 hideAccessibilityCard = prefs[KEY_HIDE_ACCESSIBILITY_CARD] ?: false,
-                hideGuideCard = prefs[KEY_HIDE_GUIDE_CARD] ?: false
+                hideGuideCard = prefs[KEY_HIDE_GUIDE_CARD] ?: false,
+                enableSmsReceive = prefs[KEY_ENABLE_SMS_RECEIVE] ?: false
             )
         }
     }
@@ -184,5 +189,9 @@ object AppPreferences {
 
     suspend fun setHideGuideCard(context: Context, value: Boolean) {
         context.dataStore.edit { it[KEY_HIDE_GUIDE_CARD] = value }
+    }
+
+    suspend fun setEnableSmsReceive(context: Context, value: Boolean) {
+        context.dataStore.edit { it[KEY_ENABLE_SMS_RECEIVE] = value }
     }
 }

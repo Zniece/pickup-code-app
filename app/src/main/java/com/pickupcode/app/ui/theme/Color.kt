@@ -18,4 +18,9 @@ val SurfaceVariant = Color(0xFFF9FAFB)    // 极浅灰卡片
 val OnSurfaceVariant = Color(0xFF6B7280)  // 次级灰文字
 val Error = Color(0xFFDC2626)             // Sleek 危险红
 val OnError = Color(0xFFFFFFFF)
-val Background = Color(0xFFFFFFFF)        // 纯白背景
+val Background = Color(0xFFF3F4F6)        // 浅灰背景（让白色卡片浮起来）
+
+// 类型识别色（左侧竖条 + badge）
+val TypeFood = Color(0xFF3B82F6)          // 取餐蓝
+val TypeParcel = Color(0xFF8B5CF6)        // 取件紫
+val TypeCoupon = Color(0xFFF59E0B)        // 券码黄

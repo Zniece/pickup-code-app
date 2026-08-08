@@ -142,15 +142,59 @@ object ShareReceiver {
      */
     fun openApp(context: Context, pkg: String) {
         if (pkg.isBlank()) return
-        try {
-            val pm = context.packageManager
-            val intent = pm.getLaunchIntentForPackage(pkg)
-            if (intent != null) {
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                context.startActivity(intent)
+        val pm = context.packageManager
+
+        // 兜底：尝试启动目标包；launch intent 存在则启动，否则返回 false
+        fun launchFromPkg(target: String): Boolean {
+            return try {
+                val intent = pm.getLaunchIntentForPackage(target)
+                if (intent != null) {
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    context.startActivity(intent)
+                    Log.i(TAG, "openApp launched: $target")
+                    true
+                } else {
+                    Log.w(TAG, "openApp: no launcher intent for $target")
+                    false
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "openApp launch failed for $target: ${e.message}")
+                false
             }
+        }
+
+        // 1) 直接启动来源包（最常见）
+        if (launchFromPkg(pkg)) return
+
+        // 2) 媒体/文档 provider（无主 Activity 的系统服务提供者）→ 映射到真实相册类 App
+        val mediaProviders = setOf(
+            "com.google.android.providers.media.module", // AOSP/Google
+            "com.android.providers.media",
+            "com.android.providers.media.documents",
+            "com.google.android.apps.photos"
+        )
+        if (pkg in mediaProviders) {
+            val galleryCandidates = listOf(
+                "com.google.android.apps.photos", // 自家
+                "com.miui.gallery",               // 小米
+                "com.huawei.photos",              // 华为
+                "com.vivo.gallery",               // vivo/iQOO
+                "com.oppo.gallery",               // OPPO
+                "com.android.gallery3d"           // AOSP 兜底
+            )
+            for (c in galleryCandidates) {
+                if (launchFromPkg(c)) return
+            }
+        }
+
+        // 3) 终极兜底：让系统挑一个能处理相册的 App
+        try {
+            val selector = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY)
+            selector.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(selector)
+            Log.i(TAG, "openApp: launched gallery fallback")
         } catch (e: Exception) {
-            Log.w(TAG, "openApp failed for $pkg: ${e.message}")
+            Log.w(TAG, "openApp fallback gallery failed: ${e.message}")
         }
     }
 
@@ -211,7 +255,7 @@ object ShareReceiver {
         }.filter { it.text.isNotBlank() }
         if (lines.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
-        val address = CodeExtractor.extractAddress(lines, allText)
+        val address = CodeExtractor.extractAddress(lines, allText, context)
         extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address, scope, shareSource = shareSource)
     }
 
@@ -260,7 +304,7 @@ object ShareReceiver {
         // 无 OCR 文本且无券码 → 无内容
         if (lines.isEmpty() && coupons.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
-        val address = CodeExtractor.extractAddress(lines, allText)
+        val address = CodeExtractor.extractAddress(lines, allText, context)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
         extractAndNotify(context, lines, snippet, screenshotPath, address, scope, coupons, shareSource)
     }
@@ -278,6 +322,14 @@ object ShareReceiver {
         val shareSourcePkg = shareSource?.pkg ?: ""
         val shareSourceName = shareSource?.name ?: ""
         val allText = lines.joinToString(" ") { it.text }
+
+        // 金融/支付噪音拦截：银行/支付/转账等通知截图里的数字（金额/验证码/余额）极易被当取件码。
+        // 命中金融词且无快递/取件信号词 → 整段不识别。（借鉴反编译 App isExpressRelatedSms）
+        if (CodeExtractor.isFinancialNoise(allText)) {
+            Log.d(TAG, "金融/支付噪音文本，跳过识别")
+            return
+        }
+
         val db = AppDatabase.getInstance(context)
         val settings = withContext(Dispatchers.IO) { AppPreferences.observe(context).first() }
         val allResults = mutableListOf<CodeExtractor.ExtractedCode>()
@@ -333,6 +385,9 @@ object ShareReceiver {
             // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
             val perCodeAddr = CodeExtractor.extractAddressForCode(lines, result.code)
             val effAddr = perCodeAddr.ifBlank { address }
+            // 独立柜号（借鉴反编译 App extractCabinetInfo），入库时作为独立 cabinetNumber 字段
+            val cabinet = if (result.type == CodeExtractor.CodeType.pickup_parcel)
+                CodeExtractor.extractCabinetNumber(lines, allText) else ""
             // 原始去重语义：查重后照常新增，让同一码多次保存产生多行，进「重复值整理」手动整理
             val save = db.codeHistoryDao().insertCheckDuplicate(CodeHistory(
                 code = result.code,
@@ -340,12 +395,18 @@ object ShareReceiver {
                 source = result.source,
                 rawTextSnippet = rawSnippet,
                 pickupAddress = effAddr,
+                cabinetNumber = cabinet,
                 screenshotPath = screenshotPath,
                 shareSourcePkg = shareSourcePkg,
                 shareSourceName = shareSourceName,
                 timestamp = System.currentTimeMillis()
             ))
             val id = save.id
+
+            // 常用站点学习：保存带地址的取件记录时累计站点频次，供后续地址识别优先匹配
+            if (result.type == CodeExtractor.CodeType.pickup_parcel && effAddr.isNotBlank()) {
+                com.pickupcode.app.learner.CommonStationStore.recordCode(context, effAddr, rawSnippet)
+            }
 
             // Notify user (同码同type已存在 -> 提示重复；否则正常通知)
             if (save.existed) {
