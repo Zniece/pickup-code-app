@@ -41,6 +41,8 @@ class MainActivity : ComponentActivity() {
     private var currentScreen by mutableStateOf(Screen.Home)
     private var selectedCodeId by mutableStateOf(-1L)
     private var showManualDialog by mutableStateOf(false)
+    // B3: showDuplicate 通知点击后待处理的去重入口跳转（onCreate/onNewIntent 置位，组合期消费）
+    private var pendingDedup by mutableStateOf(false)
 
     enum class Screen { Home, Settings, Detail, Trash, Stats, Dedup }
 
@@ -54,6 +56,8 @@ class MainActivity : ComponentActivity() {
 
         // 处理外部分享/拖放 Intent（首次启动时）
         ShareReceiver.handle(this, intent, App.appScope)
+        // B3: 消费通知导航 extra（showDuplicate 的 show_dedup）
+        consumeNotificationExtras(intent)
 
         hasNotificationPermission = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
@@ -66,6 +70,14 @@ class MainActivity : ComponentActivity() {
 
             BackHandler(enabled = currentScreen != Screen.Home) {
                 currentScreen = Screen.Home
+            }
+
+            // B3: 消费通知 extra 驱动的去重页跳转（组合期用 LaunchedEffect 置状态，避免直接改路由）
+            LaunchedEffect(pendingDedup) {
+                if (pendingDedup) {
+                    currentScreen = Screen.Dedup
+                    pendingDedup = false
+                }
             }
 
             isAccessibilityEnabled = isAccessibilityServiceEnabled()
@@ -141,6 +153,16 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         // 处理外部分享/拖放 Intent（App已在运行中时）
         ShareReceiver.handle(this, intent, App.appScope)
+        // B3: 消费通知导航 extra（showDuplicate 的 show_dedup）
+        consumeNotificationExtras(intent)
+    }
+
+    /** B3: 读取并消费通知导航 extra（show_dedup → 跳转去重整理页）。 */
+    private fun consumeNotificationExtras(intent: Intent) {
+        if (intent.getBooleanExtra("show_dedup", false)) {
+            intent.removeExtra("show_dedup")
+            pendingDedup = true
+        }
     }
 
     override fun onResume() {

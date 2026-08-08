@@ -63,11 +63,14 @@ object Kuaidi100Verifier {
                 }
 
                 val data = json.optJSONObject("data") ?: return@withContext KuaidiResult(false, null, null, null, "No data")
+                // B5: optString(key, null) 在 key 缺失时返回字面量 "null"（非 null），须用 isNull 判缺失
+                fun optNullable(key: String): String? =
+                    if (data.isNull(key)) null else data.optString(key).takeIf { it.isNotBlank() }
                 KuaidiResult(
                     success = true,
-                    pickUpCode = data.optString("pickUpCode", null).takeIf { it.isNotBlank() },
-                    pickUpStation = data.optString("pickUpStation", null).takeIf { it.isNotBlank() },
-                    pickUpAddress = data.optString("pickUpAddress", null).takeIf { it.isNotBlank() },
+                    pickUpCode = optNullable("pickUpCode"),
+                    pickUpStation = optNullable("pickUpStation"),
+                    pickUpAddress = optNullable("pickUpAddress"),
                     errorMsg = null
                 )
             } finally {
@@ -85,7 +88,7 @@ object Kuaidi100Verifier {
      * 快递100 com 码参考其官方对照表。
      */
     fun guessCourierCode(trackingNum: String): String? {
-        val brand = com.pickupcode.app.extractor.CodeExtractor.guessOrderBrand(trackingNum) ?: return null
+        val brand = com.pickupcode.app.extractor.BrandResolver.guessOrderBrand(trackingNum) ?: return null
         return BRAND_TO_KUAIDI100[brand]
     }
 

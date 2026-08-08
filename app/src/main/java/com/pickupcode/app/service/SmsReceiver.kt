@@ -7,6 +7,7 @@ import android.telephony.SmsMessage
 import android.util.Log
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
+import com.pickupcode.app.extractor.AddressExtractor
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.learner.CommonStationStore
 import com.pickupcode.app.notification.CodeNotificationManager
@@ -95,9 +96,9 @@ class SmsReceiver : BroadcastReceiver() {
                 }
 
                 val address = if (candidate.type == CodeExtractor.CodeType.pickup_parcel)
-                    CodeExtractor.extractAddress(lines, allText, context) else ""
+                    AddressExtractor.extractAddress(lines, allText, context) else ""
                 val cabinet = if (candidate.type == CodeExtractor.CodeType.pickup_parcel)
-                    CodeExtractor.extractCabinetNumber(lines, allText) else ""
+                    AddressExtractor.extractCabinetNumber(lines, allText) else ""
 
                 val db = AppDatabase.getInstance(context)
                 val dao = db.codeHistoryDao()

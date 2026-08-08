@@ -6,6 +6,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.CodeValidator
 
 /**
  * 手动输入取餐码/取件码的对话框
@@ -59,7 +60,7 @@ fun ManualCodeDialog(
         },
         confirmButton = {
             // 格式白名单校验：与 AI/正则一致，防任意字符串入库（P7）
-            val valid = code.trim().let { CodeExtractor.isValidPickupCode(it) }
+            val valid = code.trim().let { CodeValidator.isValidPickupCode(it) }
             TextButton(
                 onClick = {
                     if (valid) {

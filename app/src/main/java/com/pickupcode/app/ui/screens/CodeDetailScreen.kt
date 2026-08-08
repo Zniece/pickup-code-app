@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.sp
 import android.graphics.BitmapFactory
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.CodeValidator
 import com.pickupcode.app.learner.PatternLearner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -86,14 +87,14 @@ fun CodeDetailScreen(
                         codeConfirmed = true
                         PatternLearner.setCodeConfirmed(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
-                            PatternLearner.recordVerified(ctx, CodeExtractor.getPatternId(item.code))
+                            PatternLearner.recordVerified(ctx, CodeValidator.getPatternId(item.code))
                         }
                     },
                     onIncorrect = {
                         codeIncorrect = true
                         PatternLearner.setCodeIncorrect(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
-                            PatternLearner.recordCodeIncorrect(ctx, CodeExtractor.getPatternId(item.code))
+                            PatternLearner.recordCodeIncorrect(ctx, CodeValidator.getPatternId(item.code))
                             // A3: 该码值加入可学习排除，之后识别不再把它当取件码。
                             // 注意：不把误报文本喂入学习池(unmatched_samples)——否则会学生出与"排除"矛盾的新规则。
                             PatternLearner.addExclude(ctx, item.code)
@@ -266,7 +267,7 @@ fun CodeDetailScreen(
                     if (!codeConfirmed && !codeIncorrect) {
                         codeConfirmed = true
                         PatternLearner.setCodeConfirmed(ctx, item.id, true)
-                        scope.launch(Dispatchers.IO) { PatternLearner.recordVerified(ctx, CodeExtractor.getPatternId(item.code)) }
+                        scope.launch(Dispatchers.IO) { PatternLearner.recordVerified(ctx, CodeValidator.getPatternId(item.code)) }
                     }
                     if (!sourceConfirmed && !sourceIncorrect) {
                         sourceConfirmed = true

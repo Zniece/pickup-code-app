@@ -145,6 +145,14 @@ object CodeNotificationManager {
     /** RemindReceiver 在 onReceive 里调用：真正弹出提醒通知。 */
     fun showReminder(context: Context, code: String, type: CodeExtractor.CodeType, source: String) {
         if (code.isBlank()) return
+        // Android 13+ 无通知权限时静默跳过（与 show/showDuplicate 一致），避免无效提醒
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
         try {
             val style = typeStyle(type)
             val pendingIntent = PendingIntent.getActivity(
