@@ -108,8 +108,11 @@ fun HomeScreen(
         }
     }
 
-    // 时间分组
-    val todayStart = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000
+    // 时间分组（Medium-4: remember 键含日期，跨午夜后重组能重算 todayStart）
+    val today = LocalDate.now()
+    val todayStart = remember(today) {
+        today.atStartOfDay(ZoneId.systemDefault()).toEpochSecond() * 1000
+    }
     val yesterdayStart = todayStart - 24 * 60 * 60 * 1000
 
     val grouped: Map<String, List<CodeHistory>> = remember(filteredHistory) {
@@ -135,7 +138,9 @@ fun HomeScreen(
                         )
                     }
                     if (result == SnackbarResult.ActionPerformed) {
-                        db.codeHistoryDao().restore(item.id)
+                        // H10: 撤销与归档范围一致——恢复同 code+type 的全部记录（markDoneByCodeAndType 归档的是同 code+type 全部）
+                        trashHistory.filter { it.code == item.code && it.type == item.type }
+                            .forEach { db.codeHistoryDao().restore(it.id) }
                     }
                 }
             }
@@ -144,10 +149,10 @@ fun HomeScreen(
         withContext(Dispatchers.IO) {
             val oneDayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000
             db.codeHistoryDao().deleteExpiredTrash(oneDayAgo)
-            dedupCount = db.codeHistoryDao().countDuplicateGroups()
         }
     }
 
+    // Medium-3: 重复分组计数只随 activeHistory 变化查询，避免与上面的 LaunchedEffect(Unit) 重复查询
     LaunchedEffect(activeHistory) {
         withContext(Dispatchers.IO) {
             dedupCount = db.codeHistoryDao().countDuplicateGroups()

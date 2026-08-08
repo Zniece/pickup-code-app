@@ -9,6 +9,8 @@ import android.graphics.Paint
 import android.graphics.RectF
 import androidx.core.content.FileProvider
 import com.pickupcode.app.learner.PatternLearner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
 
@@ -23,10 +25,10 @@ object ShareStatsCard {
     private const val W = 1080
     private const val H = 1560
 
-    /** 生成海报并触发系统分享。须在 IO 线程调用。*/ 
-    fun share(context: Context, stats: PatternLearner.PatternStats) {
+    /** 生成海报并触发系统分享。重活（大位图创建 + PNG 压缩）由内部 withContext(IO) 承载，调用方无需关心线程。 */
+    suspend fun share(context: Context, stats: PatternLearner.PatternStats) {
         try {
-            doShare(context, stats)
+            withContext(Dispatchers.IO) { doShare(context, stats) }
         } catch (e: Exception) {
             // 分享失败（FileProvider/系统分享面板/内存不足）优雅降级，不崩溃
             android.util.Log.w("ShareStatsCard", "分享成绩卡失败: ${e.message}")

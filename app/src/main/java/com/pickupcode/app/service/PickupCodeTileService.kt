@@ -2,12 +2,17 @@ package com.pickupcode.app.service
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.service.quicksettings.TileService
 import android.content.Intent
 import android.util.Log
 
 class PickupCodeTileService : TileService() {
+
+    // 回主线程更新磁贴用（updateTile 必须在主线程）
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onClick() {
         super.onClick()
@@ -36,9 +41,20 @@ class PickupCodeTileService : TileService() {
 
     override fun onStartListening() {
         super.onStartListening()
-        qsTile?.apply {
-            state = android.service.quicksettings.Tile.STATE_ACTIVE
-            updateTile()
-        }
+        // Low-2: 无障碍未启用时磁贴显示不可用（灰态），避免"看起来开着其实没反应"
+        // Settings.Secure 读取涉及 Binder/IO，放子线程；磁贴更新回主线程
+        Thread {
+            val enabled = isAccessibilityEnabled()
+            mainHandler.post {
+                qsTile?.apply {
+                    state = if (enabled) {
+                        android.service.quicksettings.Tile.STATE_ACTIVE
+                    } else {
+                        android.service.quicksettings.Tile.STATE_UNAVAILABLE
+                    }
+                    updateTile()
+                }
+            }
+        }.start()
     }
 }

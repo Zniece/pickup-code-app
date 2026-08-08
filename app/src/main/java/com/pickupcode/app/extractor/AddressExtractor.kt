@@ -597,8 +597,9 @@ object AddressExtractor {
     fun extractCabinetNumber(lines: List<OCREngine.TextLine>, allText: String): String {
         val texts = lines.map { it.text }.filter { it.isNotBlank() }
         // 优先整行完整柜号：X号[副/主]柜 / 云柜X号 / X号格口
+        // 去掉泛化 [\u4e00-\u9fa5]{0,4}柜（会抓出「5号中午到柜」类噪声），位数限制 ≤3
         for (t in texts) {
-            val m = Regex("(\\d+号(?:副|主)?柜|云柜\\d+号\\d+号格口|\\d+号格口|\\d+号丰巢柜|\\d+号[\\u4e00-\\u9fa5]{0,4}柜)")
+            val m = Regex("(\\d{1,3}号(?:副|主)?柜|云柜\\d{1,3}号|\\d{1,3}号格口|\\d{1,3}号丰巢柜)")
                 .find(t) ?: continue
             val v = m.value
             if (v.length <= 12) return v
@@ -724,7 +725,9 @@ object AddressExtractor {
         // Exclude 运单号/单号 标签（如 OCR 误写的 快谨单号）——不是取件地址
         if (t.endsWith("单号") || listOf("运单号", "订单号", "快运单号", "快递单号").any { t.contains(it) }) return false
         // Exclude 订单/交易/UI 界面标签（如 OCR 把「订单详情」读成 订单详惰、交易快照、券号/券码等）——不是取件地址
-        if (listOf("订单", "交易", "快照", "详惰", "详情页", "商品", "规格", "小计", "合计", "数量", "券码", "券号").any { t.contains(it) }) return false
+        // 「商品」单独排除会误杀真实地址「商品街」（如 育新路商品街），仅当不含「商品街」时才排除
+        if (listOf("订单", "交易", "快照", "详惰", "详情页", "规格", "小计", "合计", "数量", "券码", "券号").any { t.contains(it) } ||
+            (t.contains("商品") && !t.contains("商品街"))) return false
         // OCR 把「详情/快照」等标签的字读错（详惰/快照）概率高，真实地址几乎不会以「详/惰」作实义词——单独拦以开头为详的标签串
         if (t.startsWith("详惰") || t.startsWith("订单")) return false
         // Exclude 隐私号/虚拟号/联系电话 等通知文案（带 **** 脱敏的手机信息），不是取件地址

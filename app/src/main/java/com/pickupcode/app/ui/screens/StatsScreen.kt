@@ -346,7 +346,6 @@ private fun HitRateCard(stats: List<PatternLearner.DayStat>) {
                         drawCircle(lineColor, radius = 3.dp.toPx(), center = p)
                     }
                     // 每点下方标日期（只标最多 7 个避免拥挤）
-                    val step = (n / 7).coerceAtLeast(1)
                     // 文字用 drawContext 太复杂，这里简化为只画曲线，日期标签放到下方描述
                 }
                 // 命中率描述

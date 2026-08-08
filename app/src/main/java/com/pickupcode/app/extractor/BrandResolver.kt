@@ -33,9 +33,9 @@ object BrandResolver {
         // 快餐/西式
         "麦当劳", "mcdonald", "肯德基", "kfc", "德克士", "dicos", "汉堡王", "burger king", "华莱士", "塔斯汀", "必胜客", "pizza", "达美乐", "domino", "萨莉亚", "赛百味", "subway",
         // 茶饮/新式茶
-        "喜茶", "heytea", "奈雪", "奈雪的茶", "蜜雪冰城", "霸王茶姬", "茶百道", "一点点", "coco", "都可", "书亦烧仙草", "书亦", "古茗", "茶颜悦色", "沪上阿姨", "甜啦啦", "益禾堂", "林里", "linlee", "茉莉奶白", "乐乐茶", "贡茶", "tims", "tims天好咖啡",
+        "喜茶", "heytea", "奈雪", "奈雪的茶", "蜜雪冰城", "霸王茶姬", "茶百道", "一点点", "coco", "书亦烧仙草", "书亦", "古茗", "茶颜悦色", "沪上阿姨", "甜啦啦", "益禾堂", "林里", "linlee", "茉莉奶白", "乐乐茶", "贡茶", "tims", "tims天好咖啡",
         // 中式快餐/粉面
-        "老乡鸡", "真功夫", "沙县小吃", "兰州拉面", "兰州牛肉面", "杨国福", "张亮麻辣烫", "麻辣烫", "吉野家", "味千拉面", "和府捞面", "李先生", "老娘舅", "大米先生", "乡村基",
+        "老乡鸡", "真功夫", "沙县小吃", "兰州拉面", "兰州牛肉面", "杨国福", "张亮麻辣烫", "麻辣烫", "吉野家", "味千拉面", "和府捞面", "老娘舅", "大米先生", "乡村基",
         // 烘焙/甜品/小吃
         "鲍师傅", "好利来", "味多美", "巴黎贝甜", "面包新语",
         // 火锅/正餐/其他连锁
@@ -58,7 +58,8 @@ object BrandResolver {
         COURIER_BRANDS.map { it to Regex(Regex.escape(it) + "(?:" + COURIER_SUFFIXES.joinToString("|") { Regex.escape(it) } + ")") }
 
     // Order/tracking number patterns (used for brand positioning)
-    private val COURIER_ORDER_NUM = Regex("""\b([A-Z]{2,3}\d{8,14}|\d{13,15}|\d{2,4}-\d{3,5}-\d{4,6})\b""")
+    // 允许尾缀 CN：RA/EMS 单号（如 RA123456789CN、EA123456789CN）此前因尾缀 CN 无法命中 \b 而被漏抓
+    private val COURIER_ORDER_NUM = Regex("""\b(?:[A-Z]{2,3}\d{8,14}(?:CN)?|RA\d{9,13}CN|\d{13,15}|\d{2,4}-\d{3,5}-\d{4,6})\b""")
 
     internal fun sourceFromLine(line: OCREngine.TextLine, hint: String, allLines: List<OCREngine.TextLine>, allText: String): String {
         // Strategy (ordered by reliability):

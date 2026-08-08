@@ -119,8 +119,8 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
                 onClick = { scope.launch(Dispatchers.IO) { AppPreferences.setHideAccessibilityCard(ctx, false) } },
                 enabled = s.hideAccessibilityCard,
                 modifier = Modifier.fillMaxWidth(),
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color.Black),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)) { Text("在主页重新显示无障碍提示") } }
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) { Text("在主页重新显示无障碍提示") } }
             item { HorizontalDivider() }
 
             item { Text("🗺️ 地图验证", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
@@ -189,8 +189,8 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             item {
                 var upStatus by remember { mutableStateOf<String?>(null) }; var checking by remember { mutableStateOf(false) }
                 OutlinedButton(onClick = { checking = true; scope.launch { upStatus = checkUpdate(); checking = false } }, enabled = !checking,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color.Black),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.Black)) {
+                    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
                     Text(if (checking) "检查中..." else "检查更新") }
                 upStatus?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
             }
@@ -222,11 +222,11 @@ private fun LearningStatsPanel(ctx: android.content.Context, scope: kotlinx.coro
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text("扫描 ${s.totalScans} 次 · 命中 ${s.attempts} 次（${hitRate}%）· 漏检 ${s.misses} 次", style = MaterialTheme.typography.bodyMedium)
         if (s.verified > 0) {
-            Text("已确认 ${s.verified} 次", style = MaterialTheme.typography.bodySmall, color = Color.Black)
+            Text("已确认 ${s.verified} 次", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         if (s.perPattern.isNotEmpty()) {
-            Text("格式命中：", style = MaterialTheme.typography.labelMedium, color = Color.Black)
+            Text("格式命中：", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             for ((p, n) in s.perPattern.entries.sortedByDescending { it.value }) {
                 Text("  $p : $n 次", style = MaterialTheme.typography.bodySmall)
             }
@@ -252,7 +252,7 @@ private fun LearningStatsPanel(ctx: android.content.Context, scope: kotlinx.coro
                 PatternLearner.clearUnmatched(ctx)
                 suggestions = PatternLearner.getSuggestions(ctx)
             }
-        }, colors = ButtonDefaults.textButtonColors(contentColor = Color.Black)) { Text("清除未匹配样本", style = MaterialTheme.typography.labelSmall) }
+        }, colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) { Text("清除未匹配样本", style = MaterialTheme.typography.labelSmall) }
     }
 }
 
@@ -289,7 +289,7 @@ private fun DebouncedKeyField(
         trailingIcon = if (isPassword) {
             {
                 TextButton(onClick = { visible = !visible },
-                    colors = ButtonDefaults.textButtonColors(contentColor = Color.Black)) {
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
                     Text(if (visible) "隐藏" else "显示", style = MaterialTheme.typography.labelSmall)
                 }
             }

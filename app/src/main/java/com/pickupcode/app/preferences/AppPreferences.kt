@@ -30,6 +30,8 @@ val Context.dataStore: DataStore<Preferences> by preferencesDataStore(name = "se
  */
 object AppPreferences {
 
+    private const val TAG = "AppPreferences"
+
     /** 识别置信度阈值（默认 0.5）：低于阈值的正则结果不展示（AI 结果目前不过此阈值）。 */
     private val KEY_CONFIDENCE_THRESHOLD = floatPreferencesKey("confidence_threshold")
 
@@ -45,7 +47,7 @@ object AppPreferences {
     /** 主题模式："system" 跟随系统 / "light" / "dark"（对应 Theme.kt 的三态）。 */
     private val KEY_DARK_MODE = stringPreferencesKey("dark_mode")
 
-    /** AI 识别 API Key（任意 OpenAI 兼容服务；明文存储，见类级安全说明）。 */
+    /** AI 识别 API Key（任意 OpenAI 兼容服务；B6 加密存储：AndroidKeyStore AES-GCM 密文写入 DataStore）。 */
     private val KEY_API_KEY = stringPreferencesKey("api_key")
 
     /** AI 识别 API Base URL（默认 OpenAI 官方，可换任意兼容服务）。 */
@@ -66,13 +68,13 @@ object AppPreferences {
     /** 是否启用地图地址验证（Android Geocoder + 高德，配 amap key 可提精度）。 */
     private val KEY_ENABLE_MAP_VERIFY = booleanPreferencesKey("enable_map_verify")
 
-    /** 高德 API Key（可选，仅提升地址验证精度；明文存储）。 */
+    /** 高德 API Key（可选，仅提升地址验证精度；B6 加密存储）。 */
     private val KEY_AMAP_API_KEY = stringPreferencesKey("amap_api_key")
 
     /** 是否启用快递100 反向验证（运单号查取件码/地址，校验 OCR 结果）。 */
     private val KEY_ENABLE_KUAIDI100 = booleanPreferencesKey("enable_kuaidi100")
 
-    /** 快递100 开放平台 API Key（明文存储）。 */
+    /** 快递100 开放平台 API Key（B6 加密存储）。 */
     private val KEY_KUAIDI100_KEY = stringPreferencesKey("kuaidi100_key")
 
     /** 是否隐藏主页的无障碍服务引导卡片（首次设置完成后可关）。 */
@@ -221,9 +223,10 @@ object AppPreferences {
                     KEYSTORE_ALIAS,
                     KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
                 )
-                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                    .build()
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build()
             )
             g.generateKey()
         }
@@ -231,16 +234,22 @@ object AppPreferences {
         null
     }
 
-    /** 加密明文；空串原样返回（保持默认值语义）；Keystore 不可用时回退明文（设置不彻底不可用）。 */
+    /** 加密明文；空串原样返回（保持默认值语义）；Keystore 不可用时回退明文（设置不彻底不可用，回退路径记日志）。 */
     private fun encrypt(plain: String): String {
         if (plain.isEmpty()) return plain
+        val key = keystoreKey()
+        if (key == null) {
+            android.util.Log.w(TAG, "AndroidKeyStore 密钥不可用，API Key 回退明文存储（B6）")
+            return plain
+        }
         return try {
             val cipher = Cipher.getInstance(AES_TRANSFORM)
-            cipher.init(Cipher.ENCRYPT_MODE, keystoreKey() ?: return plain)
+            cipher.init(Cipher.ENCRYPT_MODE, key)
             val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
             ENC_PREFIX + Base64.encodeToString(cipher.iv, Base64.NO_WRAP) +
                 "." + Base64.encodeToString(ct, Base64.NO_WRAP)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            android.util.Log.w(TAG, "AES-GCM 加密失败，API Key 回退明文存储（B6）: ${e.message}")
             plain
         }
     }

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
@@ -38,9 +39,7 @@ class MainActivity : ComponentActivity() {
 
     private var hasNotificationPermission by mutableStateOf(false)
     private var isAccessibilityEnabled by mutableStateOf(false)
-    private var currentScreen by mutableStateOf(Screen.Home)
-    private var selectedCodeId by mutableStateOf(-1L)
-    private var showManualDialog by mutableStateOf(false)
+    // Medium-1: currentScreen/selectedCodeId/showManualDialog 已移至 setContent 内用 rememberSaveable 管理（旋转不丢状态）
     // B3: showDuplicate 通知点击后待处理的去重入口跳转（onCreate/onNewIntent 置位，组合期消费）
     private var pendingDedup by mutableStateOf(false)
 
@@ -64,26 +63,33 @@ class MainActivity : ComponentActivity() {
                 android.content.pm.PackageManager.PERMISSION_GRANTED
         } else true
 
+        // Medium-2: 组合期不再同步读无障碍状态（每次重组重复 binder 调用）；onCreate 先赋值一次，onResume 持续刷新
+        isAccessibilityEnabled = isAccessibilityServiceEnabled()
+
         setContent {
+            // Medium-1: 导航状态用 rememberSaveable 管理，旋转屏幕不丢失
+            var currentScreen by rememberSaveable { mutableStateOf(Screen.Home.name) }
+            var selectedCodeId by rememberSaveable { mutableLongStateOf(-1L) }
+            var showManualDialog by rememberSaveable { mutableStateOf(false) }
+            val screen = Screen.valueOf(currentScreen)
+
             val settings by AppPreferences.observe(this)
                 .collectAsState(initial = AppPreferences.Settings())
 
-            BackHandler(enabled = currentScreen != Screen.Home) {
-                currentScreen = Screen.Home
+            BackHandler(enabled = screen != Screen.Home) {
+                currentScreen = Screen.Home.name
             }
 
             // B3: 消费通知 extra 驱动的去重页跳转（组合期用 LaunchedEffect 置状态，避免直接改路由）
             LaunchedEffect(pendingDedup) {
                 if (pendingDedup) {
-                    currentScreen = Screen.Dedup
+                    currentScreen = Screen.Dedup.name
                     pendingDedup = false
                 }
             }
 
-            isAccessibilityEnabled = isAccessibilityServiceEnabled()
-
             PickupCodeTheme {
-                when (currentScreen) {
+                when (screen) {
                     Screen.Home -> HomeScreen(
                         hasNotificationPermission = hasNotificationPermission,
                         isAccessibilityEnabled = isAccessibilityEnabled,
@@ -107,32 +113,32 @@ class MainActivity : ComponentActivity() {
                                 AppPreferences.setHideGuideCard(this@MainActivity, true)
                             }
                         },
-                        onSettingsClick = { currentScreen = Screen.Settings },
+                        onSettingsClick = { currentScreen = Screen.Settings.name },
                         onItemClick = { id ->
                             selectedCodeId = id
-                            currentScreen = Screen.Detail
+                            currentScreen = Screen.Detail.name
                         },
                         onFabClick = { showManualDialog = true },
-                        onTrashClick = { currentScreen = Screen.Trash },
-                        onStatsClick = { currentScreen = Screen.Stats },
-                        onDedupClick = { currentScreen = Screen.Dedup }
+                        onTrashClick = { currentScreen = Screen.Trash.name },
+                        onStatsClick = { currentScreen = Screen.Stats.name },
+                        onDedupClick = { currentScreen = Screen.Dedup.name }
                     )
                     Screen.Settings -> SettingsScreen(
-                        onBack = { currentScreen = Screen.Home },
-                        onStatsClick = { currentScreen = Screen.Stats }
+                        onBack = { currentScreen = Screen.Home.name },
+                        onStatsClick = { currentScreen = Screen.Stats.name }
                     )
                     Screen.Detail -> DetailScreenWrapper(
                         codeId = selectedCodeId,
-                        onBack = { currentScreen = Screen.Home }
+                        onBack = { currentScreen = Screen.Home.name }
                     )
                     Screen.Trash -> TrashScreen(
-                        onBack = { currentScreen = Screen.Home }
+                        onBack = { currentScreen = Screen.Home.name }
                     )
                     Screen.Stats -> StatsScreen(
-                        onBack = { currentScreen = Screen.Home }
+                        onBack = { currentScreen = Screen.Home.name }
                     )
                     Screen.Dedup -> DedupScreen(
-                        onBack = { currentScreen = Screen.Home }
+                        onBack = { currentScreen = Screen.Home.name }
                     )
                 }
 

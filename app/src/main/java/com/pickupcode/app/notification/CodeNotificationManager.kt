@@ -38,7 +38,16 @@ object CodeNotificationManager {
         )
     }
 
-    /** 稳定通知 id：基于 code+type 复合，减少短码 hashCode 碰撞，并校正非负 */
+    /** RESULT_NOTIFY_ID（结果提示通知 0x7FFFFF00，见 PickupCodeAccessibilityService）保留段起点：递增 ID 池恒低于该值，绝不与其冲突。 */
+    private const val RESERVED_NOTIFY_ID = 0x7FFFFF00
+
+    /** Medium-3: 确定性递增通知 id 池，替代 hashCode——不同取件码 hashCode 碰撞会导致通知互相覆盖。 */
+    private val idCounter = java.util.concurrent.atomic.AtomicInteger(1)
+
+    private fun nextNotifyId(): Int =
+        (idCounter.getAndIncrement() and 0x7fffffff) % RESERVED_NOTIFY_ID
+
+    /** 稳定请求码/提醒 id：基于 code+type 复合，减少短码 hashCode 碰撞，并校正非负（保留给 PendingIntent 请求码与提醒通知 ID 空间）。 */
     private fun safeId(type: CodeExtractor.CodeType, code: String): Int =
         ("$type:$code".hashCode() and 0x7fffffff)
 
@@ -72,7 +81,7 @@ object CodeNotificationManager {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val nid = safeId(type, code)
+        val nid = nextNotifyId()
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("$iconLabel $title")

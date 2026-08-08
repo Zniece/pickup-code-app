@@ -37,6 +37,9 @@ object CodeExtractor {
     private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号|驿站|快递柜|自提柜|取件点)")
     private val ORDER_LONG_SQL = Regex("\\b\\d{6,}-\\d{5,}\\b")
     private val ORDER_SHORT_SQL = Regex("\\b\\d{2,4}-\\d{3,4}-\\d{4,}\\b")
+    // 热循环正则预编译：避免每行/每次调用重复编译 Regex（原在 normalizeText 与逐行前缀匹配内 new）
+    private val WHITESPACE_REGEX = Regex("\\s+")
+    private val JOINED_PREFIX_CODE = Regex("^[餐件货单]码[A-Za-z0-9].*")
 
     private const val SCORE_PREFIXED = 100f; private const val SCORE_THREE_SEG = 95f
     private const val SCORE_FOUR_SEG = 95f
@@ -103,7 +106,7 @@ object CodeExtractor {
             }
         }
         // 压缩连续空白为单个空格，去首尾
-        return sb.toString().replace(Regex("\\s+"), " ").trim()
+        return sb.toString().replace(WHITESPACE_REGEX, " ").trim()
     }
 
     // ---------------------------------------------------------------
@@ -155,7 +158,8 @@ object CodeExtractor {
             val line = lines[i]
             // 单行匹配
             PREFIXED_CODE.find(line.text)?.let { m ->
-                val code = m.groupValues[2]
+                // OCR 常把前缀与码值间的连字符读进码值（取件码-12345 → "-12345"），trim 掉首尾 '-' 再校验
+                val code = m.groupValues[2].trim('-')
                 if (!isExcluded(code)) {
                     val p = m.groupValues[1]
                     candidates.add(Candidate(code,
@@ -167,10 +171,10 @@ object CodeExtractor {
             if (i > 0) {
                 val prev = lines[i - 1].text.trim()
                 // 仅当本行以裸前缀字+码开头（件/餐/货/单+码）且无空格分隔，才尝试拼接上一行尾字
-                if (line.text.trim().matches(Regex("^[餐件货单]码[A-Za-z0-9].*"))) {
+                if (line.text.trim().matches(JOINED_PREFIX_CODE)) {
                     val joined = prev.takeLast(1) + line.text.trim()
                     PREFIXED_CODE.find(joined)?.let { m ->
-                        val code = m.groupValues[2]
+                        val code = m.groupValues[2].trim('-')
                         if (!isExcluded(code)) {
                             val p = m.groupValues[1]
                             candidates.add(Candidate(code,
@@ -188,8 +192,8 @@ object CodeExtractor {
                 val nextLine = lines[i + 1].text.trim()
                 // Match pure numbers or letter-dash-number codes on the next line
                 val nextMatch = NEXT_LINE_CODE.find(nextLine)
-                if (nextMatch != null && !isExcluded(nextMatch.groupValues[1])) {
-                    val code = nextMatch.groupValues[1]
+                if (nextMatch != null && !isExcluded(nextMatch.groupValues[1].trim('-'))) {
+                    val code = nextMatch.groupValues[1].trim('-')
                     val isFood = lines[i].text.contains("餐") || lines[i].text.contains("单")
                     candidates.add(Candidate(code,
                         if (isFood) CodeType.pickup_food else CodeType.pickup_parcel,
@@ -205,7 +209,7 @@ object CodeExtractor {
         // 凭条号句式（凭1-6-5020到...取）：菜鸟驿站/快递柜典型通知，优先且绕过 food 上下文干扰
         for (line in lines) {
             PING_CODE.findAll(line.text).forEach matchLoop@{ m ->
-                val code = m.groupValues[1]
+                val code = m.groupValues[1].trim('-')
                 if (isExcluded(code) || code.length < 2) return@matchLoop
                 var s = SCORE_PREFIXED - PING_BASE_PENALTY
                 if (PARCEL_KEYWORDS.any { line.text.contains(it) }) s += PING_PARCEL_BONUS

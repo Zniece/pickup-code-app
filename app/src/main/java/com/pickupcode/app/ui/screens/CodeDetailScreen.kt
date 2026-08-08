@@ -37,6 +37,16 @@ import java.time.ZoneId
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 
+/** Medium-5: 确认/标记错误状态（含异步加载的初始值），避免组合期同步读 SharedPreferences。 */
+private data class DetailConfirmState(
+    val codeConfirmed: Boolean = false,
+    val codeIncorrect: Boolean = false,
+    val sourceConfirmed: Boolean = false,
+    val sourceIncorrect: Boolean = false,
+    val addrConfirmed: Boolean = false,
+    val addrIncorrect: Boolean = false
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CodeDetailScreen(
@@ -46,12 +56,23 @@ fun CodeDetailScreen(
     onMarkDone: ((Long) -> Unit)? = null
 ) {
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
-    var codeConfirmed by remember { mutableStateOf(PatternLearner.isCodeConfirmed(ctx, item.id)) }
-    var sourceConfirmed by remember { mutableStateOf(PatternLearner.isSourceConfirmed(ctx, item.id)) }
-    var addrConfirmed by remember { mutableStateOf(PatternLearner.isAddrConfirmed(ctx, item.id)) }
-    var codeIncorrect by remember { mutableStateOf(PatternLearner.isCodeIncorrect(ctx, item.id)) }
-    var sourceIncorrect by remember { mutableStateOf(PatternLearner.isSourceIncorrect(ctx, item.id)) }
-    var addrIncorrect by remember { mutableStateOf(PatternLearner.isAddrIncorrect(ctx, item.id)) }
+    // Medium-5: 6 个 PatternLearner 状态改用 produceState 在 IO 线程异步读取初始值
+    var confirmState by remember { mutableStateOf(DetailConfirmState()) }
+    val loadedConfirmState by produceState(initialValue = DetailConfirmState(), item.id) {
+        value = withContext(Dispatchers.IO) {
+            DetailConfirmState(
+                codeConfirmed = PatternLearner.isCodeConfirmed(ctx, item.id),
+                codeIncorrect = PatternLearner.isCodeIncorrect(ctx, item.id),
+                sourceConfirmed = PatternLearner.isSourceConfirmed(ctx, item.id),
+                sourceIncorrect = PatternLearner.isSourceIncorrect(ctx, item.id),
+                addrConfirmed = PatternLearner.isAddrConfirmed(ctx, item.id),
+                addrIncorrect = PatternLearner.isAddrIncorrect(ctx, item.id)
+            )
+        }
+    }
+    LaunchedEffect(loadedConfirmState) {
+        confirmState = loadedConfirmState
+    }
 
     Scaffold(
         topBar = { TopAppBar(title = { Text("详情") }, navigationIcon = {
@@ -82,16 +103,16 @@ fun CodeDetailScreen(
             EditableField(label = "码值", value = item.code, displayFontSize = 28.sp, displayFontWeight = FontWeight.Bold,
                 onSave = { onUpdated(item.copy(code = it)) })
             if (item.isActive) {
-                InlineConfirm("码值正确", confirmed = codeConfirmed, incorrect = codeIncorrect,
+                InlineConfirm("码值正确", confirmed = confirmState.codeConfirmed, incorrect = confirmState.codeIncorrect,
                     onCorrect = {
-                        codeConfirmed = true
+                        confirmState = confirmState.copy(codeConfirmed = true)
                         PatternLearner.setCodeConfirmed(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
                             PatternLearner.recordVerified(ctx, CodeValidator.getPatternId(item.code))
                         }
                     },
                     onIncorrect = {
-                        codeIncorrect = true
+                        confirmState = confirmState.copy(codeIncorrect = true)
                         PatternLearner.setCodeIncorrect(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
                             PatternLearner.recordCodeIncorrect(ctx, CodeValidator.getPatternId(item.code))
@@ -114,16 +135,16 @@ fun CodeDetailScreen(
                     }
                 })
             if (item.isActive) {
-                InlineConfirm("来源正确", confirmed = sourceConfirmed, incorrect = sourceIncorrect,
+                InlineConfirm("来源正确", confirmed = confirmState.sourceConfirmed, incorrect = confirmState.sourceIncorrect,
                     onCorrect = {
-                        sourceConfirmed = true
+                        confirmState = confirmState.copy(sourceConfirmed = true)
                         PatternLearner.setSourceConfirmed(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
                             PatternLearner.recordSourceMatch(ctx, item.source)
                         }
                     },
                     onIncorrect = {
-                        sourceIncorrect = true
+                        confirmState = confirmState.copy(sourceIncorrect = true)
                         PatternLearner.setSourceIncorrect(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) {
                             PatternLearner.recordSourceIncorrect(ctx, item.source)
@@ -185,16 +206,16 @@ fun CodeDetailScreen(
                     }
                 }
                 if (item.isActive) {
-                    InlineConfirm("地址正确", confirmed = addrConfirmed, incorrect = addrIncorrect,
+                    InlineConfirm("地址正确", confirmed = confirmState.addrConfirmed, incorrect = confirmState.addrIncorrect,
                         onCorrect = {
-                            addrConfirmed = true
+                            confirmState = confirmState.copy(addrConfirmed = true)
                             PatternLearner.setAddrConfirmed(ctx, item.id, true)
                             scope.launch(Dispatchers.IO) {
                                 PatternLearner.recordAddressVerified(ctx, item.pickupAddress, 1.0f)
                             }
                         },
                         onIncorrect = {
-                            addrIncorrect = true
+                            confirmState = confirmState.copy(addrIncorrect = true)
                             PatternLearner.setAddrIncorrect(ctx, item.id, true)
                             scope.launch(Dispatchers.IO) {
                                 PatternLearner.recordAddressIncorrect(ctx, item.pickupAddress)
@@ -264,18 +285,18 @@ fun CodeDetailScreen(
 
             if (item.isActive) {
                 val confirmAll: () -> Unit = {
-                    if (!codeConfirmed && !codeIncorrect) {
-                        codeConfirmed = true
+                    if (!confirmState.codeConfirmed && !confirmState.codeIncorrect) {
+                        confirmState = confirmState.copy(codeConfirmed = true)
                         PatternLearner.setCodeConfirmed(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) { PatternLearner.recordVerified(ctx, CodeValidator.getPatternId(item.code)) }
                     }
-                    if (!sourceConfirmed && !sourceIncorrect) {
-                        sourceConfirmed = true
+                    if (!confirmState.sourceConfirmed && !confirmState.sourceIncorrect) {
+                        confirmState = confirmState.copy(sourceConfirmed = true)
                         PatternLearner.setSourceConfirmed(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) { PatternLearner.recordSourceMatch(ctx, item.source) }
                     }
-                    if (item.pickupAddress.isNotBlank() && !addrConfirmed && !addrIncorrect) {
-                        addrConfirmed = true
+                    if (item.pickupAddress.isNotBlank() && !confirmState.addrConfirmed && !confirmState.addrIncorrect) {
+                        confirmState = confirmState.copy(addrConfirmed = true)
                         PatternLearner.setAddrConfirmed(ctx, item.id, true)
                         scope.launch(Dispatchers.IO) { PatternLearner.recordAddressVerified(ctx, item.pickupAddress, 1.0f) }
                     }
@@ -361,7 +382,8 @@ private fun EditableField(label: String, value: String, displayFontSize: android
                         TextButton(onClick = { editing = false }) { Text("取消") }
                         TextButton(onClick = { editing = false; scope.launch { onSave(editedValue) } }) { Text("保存") } }
                 } else {
-                    Text(value, fontSize = displayFontSize, fontWeight = displayFontWeight, color = Color.Black)
+                    // H9: 深色模式下黑字不可读，改用 onSurface
+                    Text(value, fontSize = displayFontSize, fontWeight = displayFontWeight, color = MaterialTheme.colorScheme.onSurface)
                     TextButton(
                         onClick = { editing = true; editedValue = value },
                         colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFF8DC0E0))

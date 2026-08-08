@@ -254,7 +254,9 @@ object ShareReceiver {
         context: Context, text: String, sourceLabel: String, scope: CoroutineScope,
         shareSource: ShareSource?
     ) {
-        val lines = text.lines().map { line ->
+        // Low-4: 分享文本可能极长（整页复制/长文），截断到 20000 字符再处理，避免 OCR/正则/存储无界增长
+        val clipped = text.take(20000)
+        val lines = clipped.lines().map { line ->
             OCREngine.TextLine(text = line.trim(), boundingBox = null, confidence = 1.0f)
         }.filter { it.text.isNotBlank() }
         if (lines.isEmpty()) return
@@ -385,6 +387,8 @@ object ShareReceiver {
             return
         }
 
+        // Low-3: 记录本次保存的 code → id，供快递100回填定向更新，避免命中历史最新行
+        val savedIdsByCode = mutableMapOf<String, Long>()
         for (result in allResults) {
             // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
             val perCodeAddr = AddressExtractor.extractAddressForCode(lines, result.code)
@@ -406,6 +410,7 @@ object ShareReceiver {
                 timestamp = System.currentTimeMillis()
             ))
             val id = save.id
+            savedIdsByCode[result.code] = id
 
             // 常用站点学习：保存带地址的取件记录时累计站点频次，供后续地址识别优先匹配
             if (result.type == CodeExtractor.CodeType.pickup_parcel && effAddr.isNotBlank()) {
@@ -467,9 +472,19 @@ object ShareReceiver {
                                 Log.d(TAG, "Kuaidi100 mismatch: OCR=${ocrCodes}, API=${res.pickUpCode}")
                             }
                             if (res.pickUpAddress.isNullOrBlank().not()) {
-                                val rec = db.codeHistoryDao().findByCodeAndType(res.pickUpCode, CodeExtractor.CodeType.pickup_parcel.name)
-                                if (rec != null && rec.pickupAddress.isBlank()) {
-                                    db.codeHistoryDao().update(rec.copy(pickupAddress = res.pickUpAddress))
+                                // Low-3: 优先定向更新本次保存的记录（同码可能有多行历史，findByCodeAndType 会命中错误行）
+                                val targetId = savedIdsByCode[res.pickUpCode]
+                                if (targetId != null) {
+                                    db.codeHistoryDao().getByIdSuspend(targetId)?.let { rec ->
+                                        if (rec.pickupAddress.isBlank()) {
+                                            db.codeHistoryDao().update(rec.copy(pickupAddress = res.pickUpAddress))
+                                        }
+                                    }
+                                } else {
+                                    val rec = db.codeHistoryDao().findByCodeAndType(res.pickUpCode, CodeExtractor.CodeType.pickup_parcel.name)
+                                    if (rec != null && rec.pickupAddress.isBlank()) {
+                                        db.codeHistoryDao().update(rec.copy(pickupAddress = res.pickUpAddress))
+                                    }
                                 }
                             }
                         }
@@ -488,21 +503,43 @@ object ShareReceiver {
         CodeExtractor.CodeType.coupon -> !settings.enableCouponCodes
     }
 
-    /** 降采样解码分享图片：先读尺寸按 inSampleSize 缩放，避免 4000×3000 全尺寸解码 OOM。 */
+    /**
+     * 降采样解码分享图片：先读尺寸按 inSampleSize 缩放，避免 4000×3000 全尺寸解码 OOM。
+     * minSdk 26 < 28：ImageDecoder（自动应用 EXIF 旋转）不可用，保留 BitmapFactory + 手动读 EXIF 旋转。
+     */
     private fun decodeSampledBitmap(context: Context, uri: Uri): Bitmap? {
         // 第一遍：只读边界拿尺寸（不分配像素）
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
 
-        // 计算采样倍数：目标最长边 ~1600px（OCR 分辨率足够，兼顾内存）
+        // 计算采样倍数：目标最长边 ~1600px（OCR 分辨率足够，兼顾内存）。
+        // Medium-3: 原 while (dim / 2 >= 1600) 在 dim∈[1600,3200) 区间不降采样，改为按最长边直接判定
         var sample = 1
         var dim = maxOf(bounds.outWidth, bounds.outHeight)
-        while (dim / 2 >= 1600) { sample *= 2; dim /= 2 }
+        while (dim >= 1600) { sample *= 2; dim /= 2 }
 
         val opts = BitmapFactory.Options().apply {
             inSampleSize = sample
         }
-        return context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+        val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
+            ?: return null
+
+        // 手动应用 EXIF 旋转（相册直出的竖拍图带 Orientation，不旋转会歪 90°/左右颠倒）
+        return try {
+            val rotation = context.contentResolver.openInputStream(uri)?.use {
+                androidx.exifinterface.media.ExifInterface(it).rotationDegrees
+            } ?: 0
+            if (rotation == 0) {
+                bmp
+            } else {
+                val matrix = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
+                val rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
+                if (rotated !== bmp) bmp.recycle()
+                rotated
+            }
+        } catch (_: Exception) {
+            bmp
+        }
     }
 }

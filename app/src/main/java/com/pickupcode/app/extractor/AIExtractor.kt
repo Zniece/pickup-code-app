@@ -98,8 +98,9 @@ object AIExtractor {
                 val r = arr.getJSONObject(i)
                 val code = r.optString("code", "").trim()
                 if (code.isBlank()) continue
-                // 格式白名单校验：AI 结果不比正则可靠，只接受合法取餐/取件码格式（复用 CodeExtractor 规则）
-                if (!CodeValidator.isValidPickupCode(code)) continue
+                // 格式白名单 + 排除链校验：AI 结果不比正则可靠，只接受合法取餐/取件码格式（复用 CodeExtractor 规则）
+                // isExcluded 为 internal，同包可直接调；补充 isValidPickupCode 之外的内容排除（手机号/金额/运单号等）
+                if (!CodeValidator.isValidPickupCode(code) || CodeValidator.isExcluded(code)) continue
                 val typeStr = r.optString("type", "pickup_parcel")
                 results.add(AIResult(
                     code = code,

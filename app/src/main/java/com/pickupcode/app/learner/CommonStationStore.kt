@@ -45,6 +45,8 @@ object CommonStationStore {
     }
 
     /** 记录一次识别：把取件地址/原文中的站点名累计出现次数。地址为空时跳过（不学噪声）。 */
+    // Medium-1: read-modify-write SharedPreferences 加 @Synchronized，防多入口（分享/无障碍/短信）并发丢计数
+    @Synchronized
     fun recordCode(context: Context, address: String, rawText: String = "") {
         val name = extractStationName(address.ifBlank { rawText }) ?: return
         val cur = loadInternal(context)

@@ -26,9 +26,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -38,6 +42,7 @@ import androidx.compose.ui.unit.dp
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.ZoneId
@@ -140,7 +145,15 @@ private fun TrashCard(
     onRestore: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val remaining = item.doneAt + 24 * 60 * 60 * 1000 - System.currentTimeMillis()
+    // H8: 组合期只算一次会导致倒计时/进度条冻结；用 tick 每分钟刷新
+    var tick by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            tick = System.currentTimeMillis()
+        }
+    }
+    val remaining = item.doneAt + 24 * 60 * 60 * 1000 - tick
     val progress = (remaining.toFloat() / (24 * 60 * 60 * 1000)).coerceIn(0f, 1f)
 
     Card(
@@ -173,7 +186,7 @@ private fun TrashCard(
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
             Text(
-                text = "剩余 ${formatRemaining(item.doneAt)}",
+                text = "剩余 ${formatRemaining(item.doneAt, tick)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -196,8 +209,8 @@ private fun formatTime(timestamp: Long): String {
         .format(DateTimeFormatter.ofPattern("MM-dd HH:mm"))
 }
 
-private fun formatRemaining(doneAt: Long): String {
-    val remaining = doneAt + 24 * 60 * 60 * 1000 - System.currentTimeMillis()
+private fun formatRemaining(doneAt: Long, now: Long): String {
+    val remaining = doneAt + 24 * 60 * 60 * 1000 - now
     if (remaining <= 0) return "即将删除"
     val hours = remaining / (60 * 60 * 1000)
     val minutes = (remaining % (60 * 60 * 1000)) / (60 * 1000)

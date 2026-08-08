@@ -64,7 +64,8 @@ interface CodeHistoryDao {
     @Query("DELETE FROM code_history WHERE id IN (:ids)")
     suspend fun deleteByIds(ids: List<Long>)
 
-    @Query("DELETE FROM code_history WHERE timestamp < :before")
+    /** Medium-2: 清理过期旧记录——仅回收站（isActive=0），绝不删活跃记录；活跃记录需用户标记已取后才可被清理。 */
+    @Query("DELETE FROM code_history WHERE isActive = 0 AND timestamp < :before")
     suspend fun deleteOlderThan(before: Long)
 
     /** 查重复码值分组（同 code+type 出现 ≥2 次），每组返回最新一条 */

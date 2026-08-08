@@ -177,7 +177,9 @@ object PatternLearner {
     }
 
     /** Record that the extractor matched a code using this pattern.
-     *  This is NOT a correctness signal — just pattern usage tracking. */
+     *  This is NOT a correctness signal — just pattern usage tracking.
+     *  H7: 计数器 read-modify-write 加 @Synchronized（与 M10/B13 同模式），防并发 getInt+putInt 丢计数。 */
+    @Synchronized
     fun recordAttempt(context: Context, patternId: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -191,6 +193,7 @@ object PatternLearner {
     /** Record that the extractor found nothing in the OCR output.
      *  仅轻量记录；autoApply（读文件+聚类+写规则）通过低频节流触发，避免每次 miss 都做重 IO。
      *  @param source B1 样本来源打标：share / sms / screen / manual / notify */
+    @Synchronized
     fun recordMiss(context: Context, rawText: String, source: String = "unknown") {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -205,6 +208,7 @@ object PatternLearner {
 
     /** Record that a user confirmed an extracted code was correct.
      *  Call this from notification tap / manual verification UI. */
+    @Synchronized
     fun recordVerified(context: Context, patternId: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -214,6 +218,7 @@ object PatternLearner {
     }
 
     /** Record that a user marked an extracted code as incorrect. */
+    @Synchronized
     fun recordCodeIncorrect(context: Context, patternId: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -222,6 +227,7 @@ object PatternLearner {
     }
 
     /** Record that a user confirmed an extracted source name (courier/restaurant) was correct. */
+    @Synchronized
     fun recordSourceMatch(context: Context, sourceName: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -230,6 +236,7 @@ object PatternLearner {
     }
 
     /** Record that a user marked an extracted source name as incorrect. */
+    @Synchronized
     fun recordSourceIncorrect(context: Context, sourceName: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
@@ -292,8 +299,11 @@ object PatternLearner {
     }
 
     fun clearUnmatched(context: Context) {
-        val file = File(context.filesDir, "unmatched_samples.json")
-        file.writeText("[]")
+        // H6: 与 appendUnmatched 共用同一把锁，避免并发清空/追加 writeText 相互覆盖（丢样本/留脏数据）
+        synchronized(unmatchedLock) {
+            val file = File(context.filesDir, "unmatched_samples.json")
+            file.writeText("[]")
+        }
     }
 
     // ---------------------------------------------------------------
@@ -505,6 +515,7 @@ private val verifiedAddrLock = Any()
     // Address verification tracking
     // ---------------------------------------------------------------
 
+    @Synchronized
     fun recordAddressVerified(context: Context, address: String, confidence: Float) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val verified = prefs.getInt("addr_verified", 0)
@@ -536,6 +547,7 @@ private val verifiedAddrLock = Any()
     }
 
     /** Record that a user marked an extracted address as incorrect. */
+    @Synchronized
     fun recordAddressIncorrect(context: Context, address: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val total = prefs.getInt("addr_total", 0)
@@ -602,7 +614,8 @@ private val verifiedAddrLock = Any()
      *  节流：距上次 touch 该规则 < 阈值则跳过，避免识别主循环每次命中都全量重写 learned_rules。 */
     fun touchRule(context: Context, regex: String) {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val stampKey = "touch_" + regex.hashCode()
+        // Low-2: 用规则自身字符串作节流 key（regex.hashCode() 有碰撞，会让不同规则互相错位节流）
+        val stampKey = "touch_" + regex
         val now = System.currentTimeMillis()
         val last = prefs.getLong(stampKey, 0L)
         if (now - last < TOUCH_THROTTLE_MS) return
@@ -627,7 +640,8 @@ private val verifiedAddrLock = Any()
                 put("enabled", r.enabled)
                 put("confidence", r.confidence.toDouble())
                 put("sampleCount", r.sampleCount)
-                put("lastUsedAt", if (r.lastUsedAt > 0) r.lastUsedAt else now)
+                // Low-3: 保持原有 lastUsedAt（为 0 则写 0），不要把从未使用过的旧规则写成 now
+                put("lastUsedAt", r.lastUsedAt)
                 put("decayed", decayed)
             })
         }

@@ -64,7 +64,7 @@ object CodeValidator {
         // 第二步：内容排除（借鉴反编译 App，过滤噪声数字模式）
         val stripped = c.replace("-", "").replace(" ", "")
         val len = stripped.length
-        if (len < 3 || len > 20) return false
+        if (len < 2 || len > 20) return false
         // 86 开头手机号子串
         if (stripped.startsWith("86") && stripped.length in 8..13) return false
         // 全 0 或全 1
@@ -96,7 +96,8 @@ object CodeValidator {
         // PURE_NUMBER_FOOD：手动/AI 校验无上下文，收紧为 4-5 位，避免 2-3 位裸数字(42/123)被当合法码
         Regex("\\d{4,5}"),
         // PREFIXED_CODE / PING_CODE 格式：覆盖带前缀上下文的码值（如 取餐码AB12、凭1-6-5020 等）
-        Regex("[A-Za-z0-9\\-]{2,12}")
+        // 收紧：必须含数字（(?=.*\d)），纯字母串（ABC/hello）不再被 catch-all 放行
+        Regex("(?=.*\\d)[A-Za-z0-9\\-]{2,12}")
     )
 
     /** 递增数字序列：排除 0123 / 1234 ... 7890 */

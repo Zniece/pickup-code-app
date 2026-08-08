@@ -64,10 +64,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         Log.d(TAG, "无障碍服务已连接")
 
         val info = AccessibilityServiceInfo().apply {
-            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED or
-                    AccessibilityEvent.TYPE_WINDOWS_CHANGED or
-                    AccessibilityEvent.TYPE_VIEW_SCROLLED
+            // Medium-1: 只注册 WINDOW_STATE_CHANGED（服务只消费该事件），减少无关事件唤醒
+            eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
             feedbackType = AccessibilityServiceInfo.FEEDBACK_GENERIC
             notificationTimeout = 100
         }
@@ -152,7 +150,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             val settings = AppPreferences.observe(this@PickupCodeAccessibilityService).first()
             val allText = collectAllText()
             val lines = allText.lines().map { OCREngine.TextLine(it, null, null) }
-            tryExtract(allText, lines, "", settings, source)
+            tryExtract(allText, lines, null, settings, source)
         }
     }
 
@@ -199,9 +197,6 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                         val bmp = hwBmp.copy(Bitmap.Config.ARGB_8888, false)
                         hwBmp.recycle()
 
-                        val timestamp = System.currentTimeMillis()
-                        val path = saveScreenshot(bmp, timestamp)
-
                         scope.launch(Dispatchers.IO) {
                             try {
                                 val lines = OCREngine.recognize(bmp)
@@ -210,9 +205,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                                 val coupons = if (settings.enableCouponCodes) {
                                     CouponDetector.detect(bmp)
                                 } else emptyList()
-                                bmp.recycle()
                                 val allText = lines.joinToString("\n") { it.text }
-                                tryExtract(allText, lines, path, settings, source, coupons)
+                                // H4: 截图保存时机后移到识别成功路径（tryExtract 内），失败不再产生垃圾文件；bmp 由 tryExtract 保存后回收
+                                tryExtract(allText, lines, bmp, settings, source, coupons)
                             } catch (e: Exception) {
                                 Log.e(TAG, "OCR失败", e)
                                 try { bmp.recycle() } catch (_: Exception) {}
@@ -229,15 +224,18 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             })
     }
 
-    private suspend fun tryExtract(allText: String, ocrLines: List<OCREngine.TextLine>, screenshotPath: String, settings: AppPreferences.Settings, source: String, coupons: List<CouponDetector.CouponResult> = emptyList()) {
+    private suspend fun tryExtract(allText: String, ocrLines: List<OCREngine.TextLine>, bmp: Bitmap?, settings: AppPreferences.Settings, source: String, coupons: List<CouponDetector.CouponResult> = emptyList()) {
         val allResults = mutableListOf<Pair<String, CodeExtractor.CodeType>>()
         val codeSources = mutableMapOf<String, String>()
+        // Medium-2: 自动扫描（自动检测）静默，不弹"未识别"类提示，避免骚扰
+        val silent = source.startsWith("自动")
 
         // 金融/支付噪音拦截：银行、支付、转账等通知截图/短信里常出现数字（金额/验证码/余额）
         // 极易被当成取件码。命中金融词且无快递/取件信号词 → 整段不识别。
         if (CodeExtractor.isFinancialNoise(allText)) {
             Log.d(TAG, "金融/支付噪音文本，跳过识别")
-            showResult("未识别到取餐码/取件码（疑似银行/支付类通知）")
+            bmp?.recycle()
+            if (!silent) showResult("未识别到取餐码/取件码（疑似银行/支付类通知）")
             return
         }
 
@@ -291,6 +289,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                     codeSources.putIfAbsent(ai.code, ai.source)
                 }
             } catch (e: Exception) {
+                // Low-1: 协程取消异常必须向上传播，不能被吞掉
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 aiErr = e.message ?: "AI同步异常"
                 Log.w(TAG, "AI 结果合并异常: ${e.message}")
             }
@@ -316,15 +316,26 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
 
         if (allResults.isEmpty()) {
-            // 问题5：若正则未识别到且 AI 也失败，提示里带上失败原因（用户有感知）
-            if (settings.enableAI && settings.apiKey.isNotBlank()) {
-                if (aiErr != null) showResult("未识别到取餐码/取件码 · AI识别失败(${aiErr.take(40)})")
-                else showResult("未识别到取餐码/取件码")
-            } else {
-                showResult("未识别到取餐码/取件码")
+            bmp?.recycle()
+            // Medium-2: 自动扫描时静默（仅日志），不弹"未识别"通知
+            if (!silent) {
+                // 问题5：若正则未识别到且 AI 也失败，提示里带上失败原因（用户有感知）
+                if (settings.enableAI && settings.apiKey.isNotBlank()) {
+                    if (aiErr != null) showResult("未识别到取餐码/取件码 · AI识别失败(${aiErr.take(40)})")
+                    else showResult("未识别到取餐码/取件码")
+                } else {
+                    showResult("未识别到取餐码/取件码")
+                }
             }
             return
         }
+
+        // H4: 识别到结果才落盘截图（保存后立即回收位图，避免泄漏）
+        val screenshotPath = bmp?.let {
+            val path = saveScreenshot(it, System.currentTimeMillis())
+            it.recycle()
+            path
+        } ?: ""
 
         // 去重：同码值同类型只保留一个；同码值不同类型保留但通知用户
         val seen = mutableSetOf<String>()
@@ -351,8 +362,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 perCodeAddr.ifBlank { address }, perCabinet)
         }
 
-        // 有冲突时通知用户自行判断
-        if (conflicts.isNotEmpty()) {
+        // 有冲突时通知用户自行判断（自动扫描静默，识别结果本身已由 saveCode 通知）
+        if (conflicts.isNotEmpty() && !silent) {
             showResult("⚠️ 「${conflicts.joinToString("、")}」同时匹配取餐/取件类型，请进入App确认")
         }
 
@@ -434,7 +445,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
     private fun saveScreenshot(bmp: Bitmap, timestamp: Long): String {
         try {
-            val dir = File(filesDir, "screenshots")
+            // H4: 存 cacheDir（系统可自动清理），避免 filesDir 无限累积
+            val dir = File(cacheDir, "screenshots")
             dir.mkdirs()
             val file = File(dir, "screenshot_$timestamp.jpg")
             FileOutputStream(file).use { out ->

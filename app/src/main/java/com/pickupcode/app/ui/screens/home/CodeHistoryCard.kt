@@ -99,7 +99,9 @@ fun CodeHistoryCard(
                 Text(
                     text = "${item.source} · ${formatTime(item.timestamp)}",
                     fontSize = 12.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
                 if (item.pickupAddress.isNotBlank()) {
                     Text(
