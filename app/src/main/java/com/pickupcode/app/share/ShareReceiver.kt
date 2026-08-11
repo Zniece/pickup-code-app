@@ -301,8 +301,10 @@ object ShareReceiver {
             try {
                 lines = OCREngine.recognize(bitmap)
                 coupons = CouponDetector.detect(bitmap)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
-                Log.e(TAG, "OCR failed: ${e.message}")
+                Log.e(TAG, "OCR failed", e)
             } finally {
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
@@ -376,6 +378,8 @@ object ShareReceiver {
                         // 构造与正则同结构的 ExtractedCode，source 用 AI 识别结果
                         allResults.add(CodeExtractor.ExtractedCode(ai.code, ai.type, ai.source, 1.0f))
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     Log.w(TAG, "AI 结果合并异常: ${e.message}")
                 }

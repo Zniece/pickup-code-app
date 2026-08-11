@@ -73,7 +73,7 @@ object OCREngine {
             throw e
         } catch (e: Exception) {
             // H-识别引擎#5: 内部兜底，避免 OCR 异常上抛导致整轮失败；无权结果时返回空列表
-            android.util.Log.e("OCREngine", "识别失败: ${e.message}")
+            android.util.Log.e("OCREngine", "识别失败", e)
             return emptyList()
         }
     }
@@ -85,8 +85,11 @@ object OCREngine {
         // H3: 与 recognize 用同一把锁，避免关闭正在 process 的客户端；非阻塞：排队等锁，在途 OCR 完成后关闭
         closeScope.launch {
             mutex.withLock {
-                recognizer?.close()
-                recognizer = null
+                try {
+                    recognizer?.close()
+                } finally {
+                    recognizer = null
+                }
             }
         }
     }

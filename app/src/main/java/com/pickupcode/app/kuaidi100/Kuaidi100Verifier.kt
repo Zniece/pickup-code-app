@@ -66,9 +66,10 @@ object Kuaidi100Verifier {
                 // B5: optString(key, null) 在 key 缺失时返回字面量 "null"（非 null），须用 isNull 判缺失
                 fun optNullable(key: String): String? =
                     if (data.isNull(key)) null else data.optString(key).takeIf { it.isNotBlank() }
+                val pCode = optNullable("pickUpCode")
                 KuaidiResult(
-                    success = true,
-                    pickUpCode = optNullable("pickUpCode"),
+                    success = pCode != null || optNullable("pickUpAddress") != null,
+                    pickUpCode = pCode,
                     pickUpStation = optNullable("pickUpStation"),
                     pickUpAddress = optNullable("pickUpAddress"),
                     errorMsg = null
@@ -89,7 +90,9 @@ object Kuaidi100Verifier {
      */
     fun guessCourierCode(trackingNum: String): String? {
         val brand = com.pickupcode.app.extractor.BrandResolver.guessOrderBrand(trackingNum) ?: return null
-        return BRAND_TO_KUAIDI100[brand]
+        val code = BRAND_TO_KUAIDI100[brand]
+        if (code == null) Log.d(TAG, "No kuaidi100 mapping for brand: $brand (tracking: $trackingNum)")
+        return code
     }
 
     private val BRAND_TO_KUAIDI100 = mapOf(

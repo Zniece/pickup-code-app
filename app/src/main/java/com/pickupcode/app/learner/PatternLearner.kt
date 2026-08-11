@@ -193,16 +193,17 @@ object PatternLearner {
     /** Record that the extractor found nothing in the OCR output.
      *  仅轻量记录；autoApply（读文件+聚类+写规则）通过低频节流触发，避免每次 miss 都做重 IO。
      *  @param source B1 样本来源打标：share / sms / screen / manual / notify */
-    @Synchronized
     fun recordMiss(context: Context, rawText: String, source: String = "unknown") {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.edit()
-            .putInt(KEY_TOTAL, prefs.getInt(KEY_TOTAL, 0) + 1)
-            .putInt(KEY_MISSES, prefs.getInt(KEY_MISSES, 0) + 1)
-            .apply()
-        recordDay(context, isHit = false, isMiss = true)
-        appendUnmatched(context, rawText, source)
-        // 低频节流触发：距上次自动学习至少间隔后才重跑，避免高频 IO
+        synchronized(this) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            prefs.edit()
+                .putInt(KEY_TOTAL, prefs.getInt(KEY_TOTAL, 0) + 1)
+                .putInt(KEY_MISSES, prefs.getInt(KEY_MISSES, 0) + 1)
+                .apply()
+            recordDay(context, isHit = false, isMiss = true)
+            appendUnmatched(context, rawText, source)
+        }
+        // 低频节流触发：放在 synchronized 块外，避免持锁期间做 IO
         autoApplyThrottled(context)
     }
 
@@ -314,6 +315,7 @@ object PatternLearner {
     private const val MAX_EXCLUDES = 100
 
     /** 把用户标记"不是取件码"的码值/片段加入可学习排除列表。 */
+    @Synchronized
     fun addExclude(context: Context, token: String) {
         if (token.isBlank()) return
         val excludes = getLearnedExcludes(context).toMutableSet()

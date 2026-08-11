@@ -88,9 +88,9 @@ fun HomeScreen(
     onDedupClick: () -> Unit
 ) {
     val context = LocalContext.current
-    val db = AppDatabase.getInstance(context)
-    val activeHistory by db.codeHistoryDao().getActiveFlow().collectAsState(initial = emptyList())
-    val trashHistory by db.codeHistoryDao().getTrashFlow().collectAsState(initial = emptyList())
+    val db = remember { AppDatabase.getInstance(context) }
+    val activeHistory by remember { db.codeHistoryDao().getActiveFlow() }.collectAsState(initial = emptyList())
+    val trashHistory by remember { db.codeHistoryDao().getTrashFlow() }.collectAsState(initial = emptyList())
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
     var dedupCount by remember { mutableIntStateOf(0) }

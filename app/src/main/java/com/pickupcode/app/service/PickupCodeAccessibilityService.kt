@@ -208,9 +208,12 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                                 val allText = lines.joinToString("\n") { it.text }
                                 // H4: 截图保存时机后移到识别成功路径（tryExtract 内），失败不再产生垃圾文件；bmp 由 tryExtract 保存后回收
                                 tryExtract(allText, lines, bmp, settings, source, coupons)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                try { bmp.recycle() } catch (_: Exception) {}
+                                throw e
                             } catch (e: Exception) {
                                 Log.e(TAG, "OCR失败", e)
-                                try { bmp.recycle() } catch (_: Exception) {}
+                                try { bmp.recycle() } catch (re: Exception) { Log.w(TAG, "Bitmap recycle failed", re) }
                                 showResult("识别出错")
                             }
                         }
@@ -355,9 +358,13 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 )
                 Log.d(TAG, "Map verify: verified=${result.verified}, confidence=${result.confidence}, provider=${result.provider}, address=$address")
                 if (result.verified) {
-                    PatternLearner.recordAddressVerified(
-                        this@PickupCodeAccessibilityService, address, result.confidence
-                    )
+                    try {
+                        PatternLearner.recordAddressVerified(
+                            this@PickupCodeAccessibilityService, address, result.confidence
+                        )
+                    } catch (e: Exception) {
+                        Log.w(TAG, "recordAddressVerified failed: ${e.message}")
+                    }
                 }
             }
         }

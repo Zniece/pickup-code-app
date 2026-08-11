@@ -39,8 +39,11 @@ object CouponDetector {
     /** 释放 ML Kit 客户端（服务销毁时调用，避免 native 资源累积泄漏） */
     fun close() {
         synchronized(this) {
-            scanner?.close()
-            scanner = null
+            try {
+                scanner?.close()
+            } finally {
+                scanner = null
+            }
         }
     }
 
@@ -64,7 +67,7 @@ object CouponDetector {
         } catch (e: CancellationException) {
             throw e   // H2: 协程取消必须重抛，不能吞
         } catch (e: Exception) {
-            Log.e(TAG, "条码检测失败: ${e.message}")
+            Log.e(TAG, "条码检测失败", e)
             emptyList()
         }
     }

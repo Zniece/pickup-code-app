@@ -34,7 +34,8 @@ import kotlin.math.roundToInt
 @Composable
 fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
-    val s by AppPreferences.observe(ctx).collectAsState(initial = AppPreferences.Settings())
+    val settingsFlow = remember { AppPreferences.observe(ctx) }
+    val s by settingsFlow.collectAsState(initial = AppPreferences.Settings())
     var apiUrl by remember { mutableStateOf(s.apiBaseUrl) }
 
     // 短信权限启动器：拒绝后开关自动回退

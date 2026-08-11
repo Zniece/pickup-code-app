@@ -76,7 +76,12 @@ object AIExtractor {
             conn.outputStream.use { it.write(body.toString().toByteArray()) }
 
             if (conn.responseCode != 200) {
-                val errBody = try { conn.errorStream?.bufferedReader(Charsets.UTF_8)?.readText() } catch (_: Exception) { null }
+                val errBody = try {
+                    conn.errorStream?.bufferedReader(Charsets.UTF_8)?.readText()
+                } catch (e: Exception) {
+                    Log.w("AIExtractor", "Failed to read error response body", e)
+                    null
+                }
                 return@withContext AIExtractResult(error = "HTTP ${conn.responseCode}: ${errBody?.take(120) ?: ""}".trim())
             }
 
@@ -92,6 +97,7 @@ object AIExtractor {
                 .replace("```", "")
                 .trim()
 
+            Log.d("AIExtractor", "AI raw content: ${content.take(500)}")
             val arr = JSONArray(content)
             val results = mutableListOf<AIResult>()
             for (i in 0 until arr.length()) {

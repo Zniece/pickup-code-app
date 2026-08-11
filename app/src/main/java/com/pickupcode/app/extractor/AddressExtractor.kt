@@ -61,6 +61,15 @@ object AddressExtractor {
     /** S6/S8 跨行拼接：行间 Y 间隔超 600 视为断卡。 */
     private const val ADDR_LINE_GAP_MAX = 600
 
+    /** extractCabinetNumber 循环匹配用（提为常量避免每次迭代重编译）。 */
+    private val CABINET_NUM_COMPLEX = Regex("(\\d{1,3}号(?:副|主)?柜|云柜\\d{1,3}号|\\d{1,3}号格口|\\d{1,3}号丰巢柜)")
+
+    /** 门牌号+柜号存在性检测用（提为常量避免每次调用重编译）。 */
+    private val ANY_CABINET_NUM = Regex("\\d+号柜")
+
+    /** X超市/X便利店/X商行 放宽匹配（extractStationName 每次调用需匹配，提为常量）。 */
+    private val FOOD_STORE_PATTERN = Regex("(?<![元券])[\\u4e00-\\u9fffA-Za-z0-9]{1,8}?(超市|便利店|商行)")
+
     // 营销横幅/优惠标签词——出现这些词的片段不是店名/站名（如【新店福利】、满减、优惠券）
     private val PROMO_LABEL_WORDS = listOf("福利", "优惠", "满减", "红包", "立减", "折扣", "特惠", "会员")
     private val PING_NOISE_TRAIL = Regex("凭\\s*[A-Za-z0-9\\-]+\\s*$")
@@ -552,8 +561,8 @@ object AddressExtractor {
             st.fullAddress = (st.fullAddress + lockerName).take(MAX_ADDRESS_LEN)
         }
         // 追加柜号（如 2号柜）：地址若没有“X号柜”则补上
-        if (st.cabinet != null && st.cabinet!!.isNotEmpty() &&
-            !Regex("\\d+号柜").containsMatchIn(st.fullAddress)) {
+        if (st.cabinet?.isNotEmpty() == true &&
+            !ANY_CABINET_NUM.containsMatchIn(st.fullAddress)) {
             st.fullAddress = (st.fullAddress + st.cabinet + "号柜").take(MAX_ADDRESS_LEN)
         }
     }
@@ -704,8 +713,7 @@ object AddressExtractor {
         // 优先整行完整柜号：X号[副/主]柜 / 云柜X号 / X号格口
         // 去掉泛化 [\u4e00-\u9fa5]{0,4}柜（会抓出「5号中午到柜」类噪声），位数限制 ≤3
         for (t in texts) {
-            val m = Regex("(\\d{1,3}号(?:副|主)?柜|云柜\\d{1,3}号|\\d{1,3}号格口|\\d{1,3}号丰巢柜)")
-                .find(t) ?: continue
+            val m = CABINET_NUM_COMPLEX.find(t) ?: continue
             val v = m.value
             if (v.length <= 12) return v
         }
@@ -739,7 +747,7 @@ object AddressExtractor {
             }
         }
         // 放宽：形如 X超市 / X便利店 / X商行 的店名（如 鮮佰汇超市）也当站点/收货点
-        Regex("(?<![元券])[\\u4e00-\\u9fffA-Za-z0-9]{1,8}?(超市|便利店|商行)").find(text)?.let { m ->
+        FOOD_STORE_PATTERN.find(text)?.let { m ->
             val name = m.groupValues[0].trim()
             if (name.length in 2..12 && PROMO_LABEL_WORDS.none { name.contains(it) }) return name
         }
@@ -808,7 +816,7 @@ object AddressExtractor {
                 val m = re.find(r) ?: break
                 // 用第一个匹配的重复单元长度做逐步折叠（处理同一串内多种重复）
                 val unit = m.groupValues[1]
-                r = r.replace(Regex(Regex.escape(unit) + "{3,}"), unit)
+                r = r.replace(Regex("(?:${Regex.escape(unit)}){3,}"), unit)
             }
         }
         return r

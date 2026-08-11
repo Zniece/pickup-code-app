@@ -145,6 +145,22 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun codeHistoryDao(): CodeHistoryDao
 
     companion object {
+        /** 1 → 2：初始表结构调整（基础 code_history 表字段补全）。 */
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE code_history ADD COLUMN stationName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE code_history ADD COLUMN stationType TEXT NOT NULL DEFAULT 'UNKNOWN'")
+            }
+        }
+
+        /** 2 → 3：新增纠错/反馈字段。 */
+        private val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE code_history ADD COLUMN codeConfirmed INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE code_history ADD COLUMN sourceConfirmed INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         /** 3 → 4：新增分享来源两个字段。用 ALTER 保留既有历史数据（避免升级清空取件记录）。 */
         private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
@@ -170,7 +186,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "pickup_code_db"
                 )
-                    .addMigrations(MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     // 兜底迁移：无 exportSchema 时首轮迁移难以严格校验 schema，仍保留 destructive 作为最后的保险，
                     // 避免未知后续版本导致无法升级卡死；已通过 addMigrations 保住 3→4 的数据。
                     .fallbackToDestructiveMigration()

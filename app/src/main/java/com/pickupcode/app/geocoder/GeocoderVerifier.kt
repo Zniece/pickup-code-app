@@ -117,10 +117,10 @@ object GeocoderVerifier {
                 provider = "android"
             )
         } catch (e: IOException) {
-            Log.e(TAG, "Android Geocoder error: ${e.message}")
+            Log.e(TAG, "Android Geocoder error", e)
             null
         } catch (e: Exception) {
-            Log.e(TAG, "Android Geocoder unexpected: ${e.message}")
+            Log.e(TAG, "Android Geocoder unexpected", e)
             null
         }
     }
@@ -205,7 +205,7 @@ object GeocoderVerifier {
                 conn.disconnect()
             }
         } catch (e: Exception) {
-            Log.e(TAG, "AMap geocoder error: ${e.message}")
+            Log.e(TAG, "AMap geocoder error", e)
             null
         }
     }
