@@ -35,6 +35,8 @@ object CodeExtractor {
     // 否则"231607 到育新路..."这类码后跟真实地址的会被漏抓（需保留开头强锚定 + 后不能紧邻数字/破折号）
     private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*(?![-\\d])")
     private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号|驿站|快递柜|自提柜|取件点)")
+    // 裸前缀字+码开头、无空格分隔的行（跨行拼接判定，循环内匹配，提为常量避免重编译）
+    private val REG_BARE_PREFIX_LINE = Regex("^[餐件货单]码[A-Za-z0-9].*")
     private val ORDER_LONG_SQL = Regex("\\b\\d{6,}-\\d{5,}\\b")
     private val ORDER_SHORT_SQL = Regex("\\b\\d{2,4}-\\d{3,4}-\\d{4,}\\b")
 
@@ -89,7 +91,7 @@ object CodeExtractor {
             if (i > 0) {
                 val prev = lines[i - 1].text.trim()
                 // 仅当本行以裸前缀字+码开头（件/餐/货/单+码）且无空格分隔，才尝试拼接上一行尾字
-                if (line.text.trim().matches(Regex("^[餐件货单]码[A-Za-z0-9].*"))) {
+                if (line.text.trim().matches(REG_BARE_PREFIX_LINE)) {
                     val joined = prev.takeLast(1) + line.text.trim()
                     PREFIXED_CODE.find(joined)?.let { m ->
                         val code = m.groupValues[2]

@@ -22,6 +22,10 @@ object AddressExtractor {
     private val ADDR_PLACED = Regex("(?:已放至|已暂存至|已放入|送达)\\s*([^，,。.\\n]{4,80})")
     private val CABINET_NUM = Regex("(\\d+)号柜")
     private val PAREN_ADDR = Regex("\\uFF08([^\\uFF09]*[路街段柜])\\uFF09")
+    // 品牌前导 2~10 汉字（S-Coupon 循环内逐行匹配，提为常量避免重编译）
+    private val REG_CJK_BRAND_LEAD = Regex("[\\u4e00-\\u9fff]{2,10}")
+    // 「地址:」标签标记（S0b 与 extractAddressForCode 共用）
+    private val REG_ADDR_LABEL_MARK = Regex("地址[:：]")
 
     // 营销横幅/优惠标签词——出现这些词的片段不是店名/站名（如【新店福利】、满减、优惠券）
     private val PROMO_LABEL_WORDS = listOf("福利", "优惠", "满减", "红包", "立减", "折扣", "特惠", "会员")
@@ -108,7 +112,7 @@ object AddressExtractor {
             val brandPart = t.substring(0, openIdx).trim()
             val paren = afterOpen.substring(0, closeIdx).trim()
             // 品牌前导需为 2~10 个汉字；括号名需以“店”结尾且不含数字（排除快递员电话括号）
-            if (!brandPart.matches(Regex("[\\u4e00-\\u9fff]{2,10}"))) continue
+            if (!brandPart.matches(REG_CJK_BRAND_LEAD)) continue
             if (!paren.endsWith("店") || paren.any { it.isDigit() }) continue
             // 完整门店串 = t 中从行首到闭括号的整段（基于原始行重建，避免 trimmed paren 导致丢字）
             val full = t.substring(0, openIdx) + t[openIdx] + afterOpen.substring(0, closeIdx + 1)
@@ -217,7 +221,7 @@ object AddressExtractor {
     // S0b: 地址: 后跟收货地址（如 收货地址:河南省周口市郸城县育新北…）
     // 逐行匹配标签值，避免 ADDR_LABEL 在整屏 allText 上贪婪匹配到无关行尾噪声
     if (st.fullAddress.isEmpty()) {
-        val labelLine = lines.firstOrNull { it.text.trim().contains(Regex("地址[:：]")) }
+        val labelLine = lines.firstOrNull { it.text.trim().contains(REG_ADDR_LABEL_MARK) }
         if (labelLine != null) {
             val a0 = cleanAddress(ADDR_LABEL.find(labelLine.text)?.groupValues?.get(1).orEmpty())
             // ①同前缀更长地址行(完整地址与标签同屏出现时优先)
@@ -604,7 +608,7 @@ object AddressExtractor {
 
         // 优先级 2：地址: 标签
         // 优先级 2：地址: 标签（含退化标签补全——如 地址:育新路育新路育 时取下方干净地址行）
-        val labLine = windowLines.firstOrNull { it.text.contains(Regex("地址[:：]")) }
+        val labLine = windowLines.firstOrNull { it.text.contains(REG_ADDR_LABEL_MARK) }
         if (labLine != null) {
             val a0 = cleanAddress(ADDR_LABEL.find(labLine.text)?.groupValues?.get(1).orEmpty())
             if (isAddressLike(a0) && a0.length >= 4) {
