@@ -233,7 +233,39 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         val allResults = mutableListOf<Pair<String, CodeExtractor.CodeType>>()
         val codeSources = mutableMapOf<String, String>()
 
-        // 券码：检测到二维码/条码并解码，code = 解码内容（不需要 OCR）
+        // ① 券码：检测到二维码/条码并解码，code = 解码内容（不需要 OCR）
+        val hasCoupon = collectCouponResults(coupons, settings, allResults, codeSources)
+
+        // ② 识别到券码后互斥：不再做取餐码/取件码的识别与标注
+        val aiDeferred = startAiExtract(allText, settings, hasCoupon)
+
+        // ③ 正则识别（无券码时运行）
+        if (!hasCoupon) collectRegexResults(ocrLines, settings, allResults, codeSources)
+
+        // ④ 合并 AI 结果：与正则同码同 type 直接去重；不同 type 才留给下方冲突提示（问题2）
+        val aiErr = mergeAiResults(aiDeferred, settings, allResults, codeSources)
+
+        // Extract address (parcel scenario)
+        val address = AddressExtractor.extractAddress(ocrLines, allText)
+
+        // Map verification (async, fire-and-forget)
+        verifyMapAddress(address, settings)
+
+        // ⑤ 问题5：若正则未识别到且 AI 也失败，提示里带上失败原因（用户有感知）
+        if (notifyIfNoResult(allResults, aiErr, settings)) return
+
+        // ⑥ 去重/冲突检测/每码地址 + 落库（同码同类型去重；同码不同类型保留但通知用户）
+        val conflicts = persistResults(ocrLines, allText, address, screenshotPath, allResults, codeSources)
+        notifyConflicts(conflicts)
+
+        // ⑦ 快递100 验证：识别到取件码时，用运单号反查取件码/地址作为标准答案，对照 OCR 结果（fire-and-forget）
+        verifyWithKuaidi100(settings, allText, address, allResults)
+    }
+
+    /** ① 券码：解码内容加入 allResults；返回 true 表示存在券码（互斥标志）。 */
+    private fun collectCouponResults(coupons: List<CouponDetector.CouponResult>, settings: AppPreferences.Settings,
+                                     allResults: MutableList<Pair<String, CodeExtractor.CodeType>>,
+                                     codeSources: MutableMap<String, String>): Boolean {
         var hasCoupon = false
         if (settings.enableCouponCodes) {
             for (c in coupons) {
@@ -246,26 +278,35 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 hasCoupon = true
             }
         }
+        return hasCoupon
+    }
 
-        // 识别到券码后互斥：不再做取餐码/取件码的识别与标注
-        val aiDeferred = if (!hasCoupon && settings.enableAI && settings.apiKey.isNotBlank()) {
+    /** ② 有券码 / 未启用 AI / 无 API Key 时返回 null（此时 AI 不会运行）。 */
+    private fun startAiExtract(allText: String, settings: AppPreferences.Settings, hasCoupon: Boolean): Deferred<AIExtractor.AIExtractResult>? {
+        return if (!hasCoupon && settings.enableAI && settings.apiKey.isNotBlank()) {
             scope.async(Dispatchers.IO) {
                 AIExtractor.extract(allText, settings.apiKey, settings.apiBaseUrl, settings.apiModel)
             }
         } else null
+    }
 
-        // 正则（无券码时运行）
-        if (!hasCoupon) {
-            val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this, source = "screen")
-            for (re in regexResults) {
-                if (re.confidence >= settings.confidenceThreshold && isTypeEnabled(re.type, settings)) {
-                    allResults.add(re.code to re.type)
-                    codeSources[re.code] = re.source
-                }
+    /** ③ 正则识别：按置信度阈值与类型开关过滤后追加到 allResults。 */
+    private fun collectRegexResults(ocrLines: List<OCREngine.TextLine>, settings: AppPreferences.Settings,
+                                    allResults: MutableList<Pair<String, CodeExtractor.CodeType>>,
+                                    codeSources: MutableMap<String, String>) {
+        val regexResults = CodeExtractor.extract(ocrLines, resources.displayMetrics.heightPixels, this, source = "screen")
+        for (re in regexResults) {
+            if (re.confidence >= settings.confidenceThreshold && isTypeEnabled(re.type, settings)) {
+                allResults.add(re.code to re.type)
+                codeSources[re.code] = re.source
             }
         }
+    }
 
-        // 合并 AI 结果：与正则同码同 type 直接去重；不同 type 才留给下方冲突提示（问题2）
+    /** ④ 合并 AI 结果：同码同 type 已有（正则或其它 AI 项）→ 跳过；否则加入。返回 aiErr（失败原因，供空结果提示用）。 */
+    private suspend fun mergeAiResults(aiDeferred: Deferred<AIExtractor.AIExtractResult>?, settings: AppPreferences.Settings,
+                                       allResults: MutableList<Pair<String, CodeExtractor.CodeType>>,
+                                       codeSources: MutableMap<String, String>): String? {
         var aiErr: String? = null
         if (aiDeferred != null) {
             try {
@@ -276,7 +317,6 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 }
                 for (ai in aiRes.results) {
                     if (!isTypeEnabled(ai.type, settings)) continue
-                    // 同码同 type 已有（正则或其它 AI 项）→ 跳过；否则加入
                     val alreadySame = allResults.any { it.first == ai.code && it.second == ai.type }
                     if (alreadySame) continue
                     allResults.add(ai.code to ai.type)
@@ -287,11 +327,11 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 Log.w(TAG, "AI 结果合并异常: ${e.message}")
             }
         }
+        return aiErr
+    }
 
-        // Extract address (parcel scenario)
-        val address = AddressExtractor.extractAddress(ocrLines, allText)
-
-        // Map verification (async, fire-and-forget)
+    /** 地图地址验证（async, fire-and-forget）。 */
+    private fun verifyMapAddress(address: String, settings: AppPreferences.Settings) {
         if (settings.enableMapVerify && address.isNotBlank()) {
             scope.launch {
                 val result = GeocoderVerifier.verify(
@@ -306,19 +346,25 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 }
             }
         }
+    }
 
-        if (allResults.isEmpty()) {
-            // 问题5：若正则未识别到且 AI 也失败，提示里带上失败原因（用户有感知）
-            if (settings.enableAI && settings.apiKey.isNotBlank()) {
-                if (aiErr != null) showResult("未识别到取餐码/取件码 · AI识别失败(${aiErr.take(40)})")
-                else showResult("未识别到取餐码/取件码")
-            } else {
-                showResult("未识别到取餐码/取件码")
-            }
-            return
+    /** ⑤ 无结果时提示（AI 失败带上原因）。返回 true 表示提前退出（后续步骤不再执行）。 */
+    private fun notifyIfNoResult(allResults: List<Pair<String, CodeExtractor.CodeType>>, aiErr: String?,
+                                 settings: AppPreferences.Settings): Boolean {
+        if (allResults.isNotEmpty()) return false
+        if (settings.enableAI && settings.apiKey.isNotBlank()) {
+            if (aiErr != null) showResult("未识别到取餐码/取件码 · AI识别失败(${aiErr.take(40)})")
+            else showResult("未识别到取餐码/取件码")
+        } else {
+            showResult("未识别到取餐码/取件码")
         }
+        return true
+    }
 
-        // 去重：同码值同类型只保留一个；同码值不同类型保留但通知用户
+    /** ⑥ 去重 + 冲突检测 + 每码地址 + 落库（saveCode 内部自启协程）。返回冲突码列表。 */
+    private fun persistResults(ocrLines: List<OCREngine.TextLine>, allText: String, address: String, screenshotPath: String,
+                               allResults: List<Pair<String, CodeExtractor.CodeType>>,
+                               codeSources: Map<String, String>): List<String> {
         val seen = mutableSetOf<String>()
         val conflicts = mutableListOf<String>()
         for ((code, type) in allResults) {
@@ -339,13 +385,19 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, allText,
                 perCodeAddr.ifBlank { address })
         }
+        return conflicts
+    }
 
-        // 有冲突时通知用户自行判断
+    /** ⑥ 有冲突时通知用户自行判断。 */
+    private fun notifyConflicts(conflicts: List<String>) {
         if (conflicts.isNotEmpty()) {
             showResult("⚠️ 「${conflicts.joinToString("、")}」同时匹配取餐/取件类型，请进入App确认")
         }
+    }
 
-        // 快递100 验证：识别到取件码时，用运单号反查取件码/地址作为标准答案，对照 OCR 结果（fire-and-forget）
+    /** ⑦ 快递100 验证：识别到取件码时，用运单号反查取件码/地址作为标准答案，对照 OCR 结果（fire-and-forget）。 */
+    private fun verifyWithKuaidi100(settings: AppPreferences.Settings, allText: String, address: String,
+                                    allResults: List<Pair<String, CodeExtractor.CodeType>>) {
         if (settings.enableKuaidi100 && settings.kuaidi100Key.isNotBlank()) {
             val trackingNum = BrandResolver.findOrderNumber(allText)
             if (trackingNum != null) {
