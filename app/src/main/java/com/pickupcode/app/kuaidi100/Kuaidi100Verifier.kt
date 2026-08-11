@@ -63,11 +63,14 @@ object Kuaidi100Verifier {
                 }
 
                 val data = json.optJSONObject("data") ?: return@withContext KuaidiResult(false, null, null, null, "No data")
+                // B5: optString(key, null) 在 key 缺失时返回字面量 "null"（非 null），须用 isNull 判缺失
+                fun optNullable(key: String): String? =
+                    if (data.isNull(key)) null else data.optString(key).takeIf { it.isNotBlank() }
                 KuaidiResult(
                     success = true,
-                    pickUpCode = data.optString("pickUpCode", null).takeIf { it.isNotBlank() },
-                    pickUpStation = data.optString("pickUpStation", null).takeIf { it.isNotBlank() },
-                    pickUpAddress = data.optString("pickUpAddress", null).takeIf { it.isNotBlank() },
+                    pickUpCode = optNullable("pickUpCode"),
+                    pickUpStation = optNullable("pickUpStation"),
+                    pickUpAddress = optNullable("pickUpAddress"),
                     errorMsg = null
                 )
             } finally {
