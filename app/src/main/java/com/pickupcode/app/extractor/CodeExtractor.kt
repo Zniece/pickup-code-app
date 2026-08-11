@@ -35,6 +35,8 @@ object CodeExtractor {
     // 否则"231607 到育新路..."这类码后跟真实地址的会被漏抓（需保留开头强锚定 + 后不能紧邻数字/破折号）
     private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*(?![-\\d])")
     private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号|驿站|快递柜|自提柜|取件点)")
+    // 裸前缀字+码开头、无空格分隔的行（跨行拼接判定，循环内匹配，提为常量避免重编译）
+    private val REG_BARE_PREFIX_LINE = Regex("^[餐件货单]码[A-Za-z0-9].*")
     private val ORDER_LONG_SQL = Regex("\\b\\d{6,}-\\d{5,}\\b")
     private val ORDER_SHORT_SQL = Regex("\\b\\d{2,4}-\\d{3,4}-\\d{4,}\\b")
     // 热循环正则预编译：避免每行/每次调用重复编译 Regex（原在 normalizeText 与逐行前缀匹配内 new）
@@ -54,6 +56,26 @@ object CodeExtractor {
     private const val PING_BASE_PENALTY = 2f
     private const val PING_PARCEL_BONUS = 8f
     private const val PING_MULTISEG_BONUS = 10f
+
+    // 上下文/位置/尺寸加分与类型惩罚（按语义分开命名；同值不同义的 5f/10f/50f 不合并）
+    private const val SCORE_CTX_BONUS = 10f            // 上下文加分（Rule.ctxBonus 实参 + 关键词/大字体行）
+    private const val SCORE_PURE_NUM_5DIGIT_BONUS = 15f // 纯数字 5 位（外卖取餐码典型长度）
+    private const val SCORE_NEAR_KEYWORD_BONUS = 15f   // 候选与关键词行相邻（±2 行）加分
+    private const val SCORE_CONFLICT_TYPE_PENALTY = 8f // 命中规则但屏幕上下文相反时的小额扣分
+    private const val SCORE_FOOD_NO_SIGNAL_PENALTY = 35f // 纯数字但无任何外卖信号时扣分
+    private const val SCORE_CROSS_TYPE_PENALTY = 50f   // 整批候选与屏幕上下文类型不一致时的大额惩罚
+    private const val SCORE_ORDER_LONG_NUM_PENALTY = 50f // 订单号长数字取件码形态扣分
+    private const val SCORE_ORDER_DIGIT_PENALTY = 30f  // 订单纯数字形态扣分
+    private const val SCORE_MULTISEG_LONG_NUM_PENALTY = 40f // 多段拼接长数字扣分
+    private const val SCORE_LEARNED_BASE = 65f         // 已学规则基础分（低于内置规则）
+    private const val SCORE_LEARNED_DECAYED_BASE = 20f // 已学规则衰减后基础分（不抢先，自愈）
+    private const val STRONG_PASS_RATIO = 0.75f        // 强规则候选通过线（>= top 的 75%）
+    private val POS_BONUS_Y_RANGE = 0.1f..0.6f   // 屏幕高度中段（候选码大概率所在区域）
+    private const val POS_BONUS_VALUE = 5f             // 中段位置加分
+    private const val SIZE_BIG_FONT_BONUS = 10f        // 大字体行加分
+    private const val SIZE_RATIO_BONUS = 8f            // 明显大于均值的行加分
+    private const val PURE_NUM_BIG_FONT_FOOD_BONUS = 5f // 纯数字+大字体（无关键词）时的少量加分
+    private const val RECORD_MISS_SNIPPET_LEN = 500    // 未识别时反馈给 PatternLearner 的文本截断长度
 
     private val FOOD_KEYWORDS = FOOD_BRAND_KEYWORDS + listOf(
         "取餐", "取餐码", "取餐号", "取单码", "取单号", "请取餐", "正在制作", "等待取餐"
@@ -226,9 +248,9 @@ object CodeExtractor {
             Rule(LETTER_DASH_FIVE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_FIVE, strong = true),
             Rule(LETTER_THREE_SEG_PARCEL, CodeType.pickup_parcel, SCORE_THREE_SEG, strong = true),
             Rule(LETTER_DASH_THREE_PARCEL, CodeType.pickup_parcel, SCORE_LETTER_DASH_THREE, strong = true),
-            Rule(LONG_NUMBER_PARCEL, CodeType.pickup_parcel, SCORE_LONG_NUM_PARCEL, 10f),
-            Rule(LETTER_NUMBER_FOOD, CodeType.pickup_food, SCORE_LETTER_NUM_FOOD, 10f, true),
-            Rule(PURE_NUMBER_FOOD, CodeType.pickup_food, SCORE_PURE_NUM_FOOD, 10f, true, true)
+            Rule(LONG_NUMBER_PARCEL, CodeType.pickup_parcel, SCORE_LONG_NUM_PARCEL, SCORE_CTX_BONUS),
+            Rule(LETTER_NUMBER_FOOD, CodeType.pickup_food, SCORE_LETTER_NUM_FOOD, SCORE_CTX_BONUS, true),
+            Rule(PURE_NUMBER_FOOD, CodeType.pickup_food, SCORE_PURE_NUM_FOOD, SCORE_CTX_BONUS, true, true)
         )
 
         // Load auto-learned patterns
@@ -244,8 +266,8 @@ object CodeExtractor {
                     val type = if (rule.type == "pickup_food") CodeType.pickup_food else CodeType.pickup_parcel
                     // 已学规则基础分低；B3: 若已衰减(超期未用)则进一步压到极低分，仍参与但不抢先，
                     // 若后续真实被用到会经 touchRule 解除衰减 —— 让衰减可自愈，而非单向永久弃用。
-                    val base = if (rule.decayed) 20f else 65f
-                    rules.add(Rule(regex, type, base, 10f, minMatchLen = 3, isLearned = true))
+                    val base = if (rule.decayed) SCORE_LEARNED_DECAYED_BASE else SCORE_LEARNED_BASE
+                    rules.add(Rule(regex, type, base, SCORE_CTX_BONUS, minMatchLen = 3, isLearned = true))
                     regexToLearned[regex.pattern] = rule.regex
                 } catch (_: Exception) { /* skip invalid regex */ }
             }
@@ -268,18 +290,18 @@ object CodeExtractor {
                         val big = avgFontHeight > 0 && line.boundingBox != null &&
                             line.boundingBox.height() > avgFontHeight * FONT_SIZE_RATIO_THRESHOLD
                         if (n <= 2 && !kw && !big) return@matchLoop
-                        if (n == 5) s += 15f
+                        if (n == 5) s += SCORE_PURE_NUM_5DIGIT_BONUS
                         if (isFoodContext) {
-                            if (kw || big) s += 10f
-                            else if (line.boundingBox != null && line.boundingBox.height() > LARGE_FONT_HEIGHT_PX) s += 5f
-                            else s -= 35f
+                            if (kw || big) s += SCORE_CTX_BONUS
+                            else if (line.boundingBox != null && line.boundingBox.height() > LARGE_FONT_HEIGHT_PX) s += PURE_NUM_BIG_FONT_FOOD_BONUS
+                            else s -= SCORE_FOOD_NO_SIGNAL_PENALTY
                         } else if (!kw && !big) return@matchLoop
                     }
 
                     val ctxOk = when (rule.type) { CodeType.pickup_food -> isFoodContext; CodeType.pickup_parcel -> isParcelContext; CodeType.coupon -> false }
                     if (ctxOk) s += rule.ctxBonus
                     val conflict = when (rule.type) { CodeType.pickup_food -> isParcelContext && !isFoodContext; CodeType.pickup_parcel -> isFoodContext && !isParcelContext; CodeType.coupon -> false }
-                    if (conflict) s -= 8f
+                    if (conflict) s -= SCORE_CONFLICT_TYPE_PENALTY
 
                     // B3: 命中已学规则 → 刷新其 lastUsedAt 并解除衰减（用 isLearned 标识，比 baseScore 判等更稳）
                     if (context != null && rule.isLearned && m.value.length >= 3) {
@@ -296,15 +318,15 @@ object CodeExtractor {
 
         if (candidates.isEmpty()) return emptyList()
 
-        if (isParcelContext && !isFoodContext) candidates.replaceAll { c -> if (c.type == CodeType.pickup_food) c.copy(score = c.score - 50f) else c }
-        if (isFoodContext && !isParcelContext) candidates.replaceAll { c -> if (c.type == CodeType.pickup_parcel) c.copy(score = c.score - 50f) else c }
+        if (isParcelContext && !isFoodContext) candidates.replaceAll { c -> if (c.type == CodeType.pickup_food) c.copy(score = c.score - SCORE_CROSS_TYPE_PENALTY) else c }
+        if (isFoodContext && !isParcelContext) candidates.replaceAll { c -> if (c.type == CodeType.pickup_parcel) c.copy(score = c.score - SCORE_CROSS_TYPE_PENALTY) else c }
         val hasMultiseg = candidates.any { it.type == CodeType.pickup_parcel && (THREE_SEGMENT_PARCEL.matches(it.code) || FOUR_SEGMENT_PARCEL.matches(it.code)) }
-        if (hasMultiseg) candidates.replaceAll { c -> if (c.type == CodeType.pickup_parcel && LONG_NUMBER_PARCEL.matches(c.code)) c.copy(score = c.score - 40f) else c }
+        if (hasMultiseg) candidates.replaceAll { c -> if (c.type == CodeType.pickup_parcel && LONG_NUMBER_PARCEL.matches(c.code)) c.copy(score = c.score - SCORE_MULTISEG_LONG_NUM_PENALTY) else c }
         val hasOrder = allText.contains(ORDER_LONG_SQL) || allText.contains(ORDER_SHORT_SQL)
         if (hasOrder) {
             candidates.replaceAll { c ->
-                if (LONG_NUMBER_PARCEL.matches(c.code)) c.copy(score = c.score - 50f)
-                else if (c.type == CodeType.pickup_parcel && c.code.all { it.isDigit() }) c.copy(score = c.score - 30f)
+                if (LONG_NUMBER_PARCEL.matches(c.code)) c.copy(score = c.score - SCORE_ORDER_LONG_NUM_PENALTY)
+                else if (c.type == CodeType.pickup_parcel && c.code.all { it.isDigit() }) c.copy(score = c.score - SCORE_ORDER_DIGIT_PENALTY)
                 else c
             }
         }
@@ -317,7 +339,7 @@ object CodeExtractor {
                     val candidateLineIdx = lines.indexOfFirst { it.text.contains(c.code) }
                     candidateLineIdx >= 0 && kotlin.math.abs(lineIdx - candidateLineIdx) <= 2
                 }
-                if (nearKeyword) c.copy(score = c.score + 15f) else c
+                if (nearKeyword) c.copy(score = c.score + SCORE_NEAR_KEYWORD_BONUS) else c
             }
         }
 
@@ -345,7 +367,7 @@ object CodeExtractor {
             if (c.code in seen) continue; seen.add(c.code)
             // 修复多通知同屏漏识别：强上下文证据码(PREFIXED/凭条/段式)不过 top×0.75 阈值，
             // 只对无证据的弱候选(纯数字噪声)做 top×0.75 过滤，避免高分码拖死同屏次高分真实码。
-            if (c.strong || c.score >= top * 0.75f)
+            if (c.strong || c.score >= top * STRONG_PASS_RATIO)
                 results.add(ExtractedCode(c.code, c.type, c.source, (c.score / SCORE_PREFIXED).coerceIn(0f, 1f)))
         }
         if (context != null) recordLearning(context, results, allText, source)
@@ -356,15 +378,15 @@ object CodeExtractor {
 
     private fun posBonus(line: OCREngine.TextLine, screenHeight: Int): Float {
         val box = line.boundingBox ?: return 0f
-        if (screenHeight > 0 && box.centerY() in (screenHeight * 0.1f).toInt()..(screenHeight * 0.6f).toInt()) return 5f
+        if (screenHeight > 0 && box.centerY() in (screenHeight * POS_BONUS_Y_RANGE.start).toInt()..(screenHeight * POS_BONUS_Y_RANGE.endInclusive).toInt()) return POS_BONUS_VALUE
         return 0f
     }
 
     private fun sizeBonus(line: OCREngine.TextLine, avgFontHeight: Float): Float {
         val box = line.boundingBox ?: return 0f
         var b = 0f
-        if (box.height() > LARGE_FONT_HEIGHT_PX) b += 10f
-        if (avgFontHeight > 0 && box.height() > avgFontHeight * FONT_SIZE_RATIO_THRESHOLD) b += 8f
+        if (box.height() > LARGE_FONT_HEIGHT_PX) b += SIZE_BIG_FONT_BONUS
+        if (avgFontHeight > 0 && box.height() > avgFontHeight * FONT_SIZE_RATIO_THRESHOLD) b += SIZE_RATIO_BONUS
         return b
     }
 
@@ -379,7 +401,7 @@ object CodeExtractor {
                 PatternLearner.recordAttempt(context, pid)
             }
         } else {
-            PatternLearner.recordMiss(context, allText.take(500), source)
+            PatternLearner.recordMiss(context, allText.take(RECORD_MISS_SNIPPET_LEN), source)
         }
     }
 }

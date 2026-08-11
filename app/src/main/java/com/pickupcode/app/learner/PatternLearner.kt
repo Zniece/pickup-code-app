@@ -594,7 +594,7 @@ private val verifiedAddrLock = Any()
     private const val KEY_LAST_AUTOAPPLY = "last_autoapply"
     /** B3: 多少毫秒未使用视为"衰减"，自动降级为可选规则（默认 21 天）。 */
     private const val DECAY_MS = 21L * 24 * 60 * 60 * 1000
-    private const val AUTP_APPLY_THROTTLE_MS = 6L * 60 * 60 * 1000 // 6h
+    private const val AUTO_APPLY_THROTTLE_MS = 6L * 60 * 60 * 1000 // 6h
     private const val TOUCH_THROTTLE_MS = 60L * 1000 // B3 touch 节流：1 分钟内不重复全量写盘
 
     /** A1: 停用/启用某条已学规则。 */
@@ -691,7 +691,7 @@ private val verifiedAddrLock = Any()
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val now = System.currentTimeMillis()
         val last = prefs.getLong(KEY_LAST_AUTOAPPLY, 0)
-        if (now - last < AUTP_APPLY_THROTTLE_MS) return
+        if (now - last < AUTO_APPLY_THROTTLE_MS) return
         prefs.edit().putLong(KEY_LAST_AUTOAPPLY, now).apply()
         autoApply(context)
     }

@@ -25,6 +25,41 @@ object AddressExtractor {
     private val ADDR_PLACED = Regex("(?:已放至|已暂存至|已放入|送达)\\s*([^，,。.\\n]{4,80})")
     private val CABINET_NUM = Regex("(\\d+)号柜")
     private val PAREN_ADDR = Regex("\\uFF08([^\\uFF09]*[路街段柜])\\uFF09")
+    // 品牌前导 2~10 汉字（S-Coupon 循环内逐行匹配，提为常量避免重编译）
+    private val REG_CJK_BRAND_LEAD = Regex("[\\u4e00-\\u9fff]{2,10}")
+    // 「地址:」标签标记（S0b 与 extractAddressForCode 共用）
+    private val REG_ADDR_LABEL_MARK = Regex("地址[:：]")
+
+    // ---------------------------------------------------------------
+    // 长度/几何容差常量（各步骤共用，按语义分开命名）
+    // ---------------------------------------------------------------
+
+    /** 地址/站名长度上限（take(80) 截断 + isAddressLike 上限，20+ 处共用）。 */
+    private const val MAX_ADDRESS_LEN = 80
+
+    /** 地址核心长度下限（候选少于 4 字符不算地址/标签值）。 */
+    private const val MIN_ADDRESS_CORE_LEN = 4
+
+    /** S0c 列布局：标签与值中心 Y 容差。 */
+    private const val COLUMN_BAND_Y_TOL = 60
+
+    /** S0c 列布局：下一行中心 Y 继续收集的间隔上限。 */
+    private const val COLUMN_CONTINUE_Y_GAP = 120
+
+    /** S0c 列布局：值与标签左边缘 X 对齐容差。 */
+    private const val COLUMN_SAME_X_TOL = 40
+
+    /** S0b/S8 标签邻近行：Y 距离上限。 */
+    private const val LABEL_NEARBY_Y_GAP = 300f
+
+    /** S8 通知卡片：码行 ±3 行窗口（含 S6/S8 跨行拼接 1~3 行）。 */
+    private const val CARD_LINE_WINDOW = 3
+
+    /** S8 同卡片行距上限（超 400px 视为新卡片）。 */
+    private const val CARD_WINDOW_Y_GAP = 400f
+
+    /** S6/S8 跨行拼接：行间 Y 间隔超 600 视为断卡。 */
+    private const val ADDR_LINE_GAP_MAX = 600
 
     // 营销横幅/优惠标签词——出现这些词的片段不是店名/站名（如【新店福利】、满减、优惠券）
     private val PROMO_LABEL_WORDS = listOf("福利", "优惠", "满减", "红包", "立减", "折扣", "特惠", "会员")
@@ -43,444 +78,514 @@ object AddressExtractor {
     // Address extraction (structured)
     // ---------------------------------------------------------------
 
-    internal fun extractLocation(lines: List<OCREngine.TextLine>, allText: String): PickupLocation {
+
+    /** 显式地址标签（S0 找地址写入点、S8 找邻近补站名共用）。 */
+    private val EXPLICIT_LABELS = listOf("取件点位置", "取件地址", "收货地址", "代收点地址", "取件点")
+
+    /** 续行阻断词（S2/S8/S10 共用：出现即停止向下拼接，防 UI 按钮文案混入地址）。 */
+    private val CONTINUE_BLOCK_WORDS = listOf("展开", "收起", "复制", "拨打", "导航", "昨天", "今天", "消息", "通知")
+
+    /** extractLocation 各步骤间共享的可变状态（拆分后替代原 4 个并列局部变量）。 */
+    private class LocationState {
         var stationName = ""
         var fullAddress = ""
         var cabinet: String? = null
-        var addrFrom = "none"
+        var addrFrom = "none"   // 诊断标签（CodeExtrDiag 日志用，12 个来源值原样保留）
+    }
 
-        // S-Coupon: 券码/到店券的门店识别（最高优先级）
-        // 场景：外卖/到店券（德克士、蜜雪冰城等）截图，用户要的是“适用门店”（如 蜜雪冰城(老十字街店)），
-        // 而非配送地址/周边地址。信号：待使用/用券/到店取/适用门店/立即用券/到店使用/券号 等券码上下文。
-        val couponContext = listOf(
-            "券号", "用券", "到店取", "到店使用", "待使用", "适用门店", "立即用券",
-            "再次使用", "已使用", "兑换", "代金券", "优惠券", "满减券"
-        )
-        val isCouponContext = couponContext.any { allText.contains(it) }
-        if (isCouponContext && fullAddress.isEmpty()) {
-            // 优先扫描逐行，找“品牌名(店名)”格式（蜜雪冰城(老十字街店) / 德克士(郸械万果园店)）
-            // 注意：括号字符类易触发 ICU 正则“incorrectly nested parentheses”，
-            // 故不用单条大正则，改用简单匹配 + 字符串定位，稳妥且兼容。
-            var couponAddr = ""
-            var couponStation = ""
-            for (line in lines) {
-                val t = line.text.trim()
-                // 用全角/半角开括号定位门店串：形如 品牌(店名) 或 品牌（店名）
-                val openIdx = t.indexOfAny(charArrayOf('(', '（'))
-                if (openIdx < 1) continue
-                val afterOpen = t.substring(openIdx + 1)
-                // 闭括号位置（全角/半角）
-                val closeP = afterOpen.indexOf(')'); val closeF = afterOpen.indexOf('）')
-                val closeIdx = when {
-                    closeP >= 0 && closeF >= 0 -> minOf(closeP, closeF)
-                    closeP >= 0 -> closeP
-                    closeF >= 0 -> closeF
-                    else -> -1
-                }
-                if (closeIdx <= 0) continue
-                val brandPart = t.substring(0, openIdx).trim()
-                val paren = afterOpen.substring(0, closeIdx).trim()
-                // 品牌前导需为 2~10 个汉字；括号名需以“店”结尾且不含数字（排除快递员电话括号）
-                if (!brandPart.matches(Regex("[\\u4e00-\\u9fff]{2,10}"))) continue
-                if (!paren.endsWith("店") || paren.any { it.isDigit() }) continue
-                // 完整门店串 = t 中从行首到闭括号的整段（基于原始行重建，避免 trimmed paren 导致丢字）
-                val full = t.substring(0, openIdx) + t[openIdx] + afterOpen.substring(0, closeIdx + 1)
-                // 行内门店信号：命中（已通过品牌前导校验的前提下）再认。
-                // 注意：品牌前导校验已足够窄，此处要求额外的“到店/适用门店/营业中”这类券码信号，
-                // 以提高精确度——避免把正文里任意 “X(某店)” 当门店（PRD：只认券码截图的门店）。
-                val brandHits = BrandResolver.FOOD_BRAND_KEYWORDS.any { brandPart.contains(it, ignoreCase = true) }
-                val storeSig =
-                    t.contains("营业中") || t.contains("适用门店") || t.contains("到店") ||
-                        t.contains("用券") || t.contains("门店") || brandHits
-                if (!storeSig) continue
-                couponAddr = full
-                couponStation = full
-                break
+    internal fun extractLocation(lines: List<OCREngine.TextLine>, allText: String): PickupLocation {
+        val st = LocationState()
+
+        stepCoupon(lines, allText, st)              // S-Coupon: 券码门店（内部守卫）
+        stepBracketBrand(allText, st)               // S1: 【】括号站名（无守卫）
+        stepExplicitLabel(lines, st)                // S0: 显式标签（内层守卫）
+        if (st.fullAddress.isEmpty()) stepAddrLabel(lines, st)       // S0b
+        if (st.fullAddress.isEmpty()) stepColumnLayout(lines, st)    // S0c
+        if (st.fullAddress.isEmpty()) stepPipeSeparated(lines, st)   // S2
+        if (st.fullAddress.isEmpty()) stepPlacedPhrase(allText, st)  // S5
+        if (st.fullAddress.isEmpty()) stepAfterToPhrase(lines, st)   // S6/S6b
+        stepCabinetLine(lines, st)                  // S7: 号柜行（无守卫，cabinet 无条件更新）
+        stepNearbyPrefix(lines, st)                 // S8: 前缀邻行（无守卫）
+        if (st.fullAddress.isEmpty()) stepParenthesized(lines, st)   // S9
+        if (st.fullAddress.isEmpty()) stepFallback(lines, st)        // S10
+        postProcessLocker(allText, st)              // 收尾：柜名合并/站名修正
+        return buildLocation(lines, allText, st)
+    }
+
+    /** S-Coupon: 券码/到店券门店识别（最高优先级；内部含券码上下文守卫）。 */
+    private fun stepCoupon(lines: List<OCREngine.TextLine>, allText: String, st: LocationState) {
+    // S-Coupon: 券码/到店券的门店识别（最高优先级）
+    // 场景：外卖/到店券（德克士、蜜雪冰城等）截图，用户要的是“适用门店”（如 蜜雪冰城(老十字街店)），
+    // 而非配送地址/周边地址。信号：待使用/用券/到店取/适用门店/立即用券/到店使用/券号 等券码上下文。
+    val couponContext = listOf(
+        "券号", "用券", "到店取", "到店使用", "待使用", "适用门店", "立即用券",
+        "再次使用", "已使用", "兑换", "代金券", "优惠券", "满减券"
+    )
+    val isCouponContext = couponContext.any { allText.contains(it) }
+    if (isCouponContext && st.fullAddress.isEmpty()) {
+        // 优先扫描逐行，找“品牌名(店名)”格式（蜜雪冰城(老十字街店) / 德克士(郸械万果园店)）
+        // 注意：括号字符类易触发 ICU 正则“incorrectly nested parentheses”，
+        // 故不用单条大正则，改用简单匹配 + 字符串定位，稳妥且兼容。
+        var couponAddr = ""
+        var couponStation = ""
+        for (line in lines) {
+            val t = line.text.trim()
+            // 用全角/半角开括号定位门店串：形如 品牌(店名) 或 品牌（店名）
+            val openIdx = t.indexOfAny(charArrayOf('(', '（'))
+            if (openIdx < 1) continue
+            val afterOpen = t.substring(openIdx + 1)
+            // 闭括号位置（全角/半角）
+            val closeP = afterOpen.indexOf(')'); val closeF = afterOpen.indexOf('）')
+            val closeIdx = when {
+                closeP >= 0 && closeF >= 0 -> minOf(closeP, closeF)
+                closeP >= 0 -> closeP
+                closeF >= 0 -> closeF
+                else -> -1
             }
-            if (couponAddr.isNotEmpty()) {
-                fullAddress = couponAddr.take(80)
-                stationName = couponStation
-                addrFrom = "SCoupon-store"
-                // 若 isAddressLike 校验不通过（如门店串太短/不含地址特征），仍保留但降级以不改后续逻辑
+            if (closeIdx <= 0) continue
+            val brandPart = t.substring(0, openIdx).trim()
+            val paren = afterOpen.substring(0, closeIdx).trim()
+            // 品牌前导需为 2~10 个汉字；括号名需以“店”结尾且不含数字（排除快递员电话括号）
+            if (!brandPart.matches(REG_CJK_BRAND_LEAD)) continue
+            if (!paren.endsWith("店") || paren.any { it.isDigit() }) continue
+            // 完整门店串 = t 中从行首到闭括号的整段（基于原始行重建，避免 trimmed paren 导致丢字）
+            val full = t.substring(0, openIdx) + t[openIdx] + afterOpen.substring(0, closeIdx + 1)
+            // 行内门店信号：命中（已通过品牌前导校验的前提下）再认。
+            // 注意：品牌前导校验已足够窄，此处要求额外的“到店/适用门店/营业中”这类券码信号，
+            // 以提高精确度——避免把正文里任意 “X(某店)” 当门店（PRD：只认券码截图的门店）。
+            val brandHits = BrandResolver.FOOD_BRAND_KEYWORDS.any { brandPart.contains(it, ignoreCase = true) }
+            val storeSig =
+                t.contains("营业中") || t.contains("适用门店") || t.contains("到店") ||
+                    t.contains("用券") || t.contains("门店") || brandHits
+            if (!storeSig) continue
+            couponAddr = full
+            couponStation = full
+            break
+        }
+        if (couponAddr.isNotEmpty()) {
+            st.fullAddress = couponAddr.take(MAX_ADDRESS_LEN)
+            st.stationName = couponStation
+            st.addrFrom = "SCoupon-store"
+            // 若 isAddressLike 校验不通过（如门店串太短/不含地址特征），仍保留但降级以不改后续逻辑
+        }
+    }
+    }
+
+    /** S1: 【】括号站名（无守卫，纯填 stationName）。 */
+    private fun stepBracketBrand(allText: String, st: LocationState) {
+    // S1: 【】 bracket brand for station name
+    // 优先取含站点/快递关键词的括号；跳过快递员姓名+电话的括号（如【刘趁义:19037835253】）
+    // 注意：不设“取第一个括号”的兜底——否则快递员括号会误当站名，留空交给后面的分支补全
+    val bracketMatches = BrandResolver.BRACKET_BRAND.findAll(allText).map { it.groupValues[1].trim() }.toList()
+    val goodBracket = bracketMatches.firstOrNull { content ->
+        // 跳过包含手机号/运单号等数字的括号
+        if (content.any { it.isDigit() }) return@firstOrNull false
+        // 跳过优惠/福利/券类营销横幅（如【新店福利】是“新店优惠”标签，不是店名/站名）
+        if (PROMO_LABEL_WORDS.any { content.contains(it) }) return@firstOrNull false
+        STATION_TYPE_MAP.keys.any { content.contains(it) } ||
+            ADDR_PIPE_FULL.containsMatchIn(content) ||
+            ADDR_LANDMARK.containsMatchIn(content) ||
+            listOf("店", "超市", "智柜", "生活", "代收", "驿站").any { content.contains(it) }
+    }
+    if (goodBracket != null) st.stationName = stripBrackets(goodBracket)
+    }
+
+    /** S0: 显式标签（取件地址/收货地址…）——最可靠地址信号，内层守卫原样。 */
+    private fun stepExplicitLabel(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S0: 显式标签（取件地址/收货地址/代收点地址/取件点…）——最可靠的地址信号，最高优先级
+    for (lineIdx in lines.indices) {
+        val line = lines[lineIdx]
+        for (p in EXPLICIT_LABELS) {
+            val i = line.text.indexOf(p)
+            if (i < 0) continue
+            var a = line.text.substring(i + p.length).trimStart(':', '：', ' ')
+            for (sep in listOf('|', '｜')) {
+                val bar = a.indexOf(sep)
+                if (bar >= 0) { if (st.stationName.isEmpty()) st.stationName = extractStationName(a.substring(0, bar).trim()); a = a.substring(bar + 1).trim() }
+            }
+            a = cleanAddress(a)
+            // 标签后若空/太短（值可能在下一行），向下拼 1~2 行续行
+            if (st.fullAddress.isEmpty() && !isAddressLike(a) && lineIdx + 1 < lines.size) {
+                val cont = StringBuilder()
+                for (j in lineIdx + 1 until minOf(lineIdx + CARD_LINE_WINDOW, lines.size)) {
+                    val c = lines[j].text.trim()
+                    if (c.isEmpty()) continue
+                    if (c.first().isDigit() || c.startsWith("|")) break
+                    cont.append(c)
+                }
+                val combined = cleanAddress(a + cont.toString())
+                if (isAddressLike(combined)) a = combined
+            }
+            // 折叠地址补全：S0-label 抓到的地址若只到省市区层级（缺路/街/号/店等街道/网点特征），
+            // 折叠地址补全：S0-label 抓到的地址可能是被 UI 折叠的短串（如“…育新北展开”或“【xx店:..”），
+            // 而同屏另有更具体的完整街道地址行（快递正文，如 育新路北段爱玛电动车旁边）。
+            // 判断标准：存在比 a 更长、像地址、无折叠残留(未闭合括号/省略号/展开) 且含明确街道特征的行 → 就用它替换。
+            val streetLike = listOf("路", "街", "巷", "弄", "道", "号店", "小区", "苑", "大厦", "超市", "驿站", "快柜", "智柜", "村", "庄")
+            val adminLike = listOf("省", "市", "县", "区")
+            // 折叠残留检测：a 以未闭合括号开头（如 【xx店，右括号被截断），或含 …/.. 省略号痕迹
+            val uncleanA = a.startsWith("【") || a.startsWith("（") || a.startsWith("(") ||
+                a.contains("..") || a.contains("…")
+            val better = lines
+                .map { it.text.trim() }
+                .filter {
+                    it.length in 6..60 &&
+                        it.length > a.length &&
+                        streetLike.any { s -> it.contains(s) } &&
+                        adminLike.none { ad -> it.contains(ad) } &&
+                        listOf("电话", "..", "拨打", "联系", "展开", "【", "（", "(").none { it2 -> it.contains(it2) } &&
+                        isAddressLike(it)
+                }
+                .maxByOrNull { it.length }
+            // 条件：a 有折叠残留，或（a 是地址但缺明确街道特征时，且能找到更长完整行）→ 替换
+            if (better != null && better != a &&
+                (uncleanA || streetLike.none { a.contains(it) })) {
+                a = better
+            }
+            if (st.fullAddress.isEmpty() && isAddressLike(a)) {
+                st.fullAddress = a.take(MAX_ADDRESS_LEN)
+                st.addrFrom = "S0-label"
+                if (st.stationName.isEmpty()) st.stationName = extractStationName(a)
             }
         }
+    }
+    }
 
-        // S1: 【】 bracket brand for station name
-        // 优先取含站点/快递关键词的括号；跳过快递员姓名+电话的括号（如【刘趁义:19037835253】）
-        // 注意：不设“取第一个括号”的兜底——否则快递员括号会误当站名，留空交给后面的分支补全
-        val bracketMatches = BrandResolver.BRACKET_BRAND.findAll(allText).map { it.groupValues[1].trim() }.toList()
-        val goodBracket = bracketMatches.firstOrNull { content ->
-            // 跳过包含手机号/运单号等数字的括号
-            if (content.any { it.isDigit() }) return@firstOrNull false
-            // 跳过优惠/福利/券类营销横幅（如【新店福利】是“新店优惠”标签，不是店名/站名）
-            if (PROMO_LABEL_WORDS.any { content.contains(it) }) return@firstOrNull false
-            STATION_TYPE_MAP.keys.any { content.contains(it) } ||
-                ADDR_PIPE_FULL.containsMatchIn(content) ||
-                ADDR_LANDMARK.containsMatchIn(content) ||
-                listOf("店", "超市", "智柜", "生活", "代收", "驿站").any { content.contains(it) }
-        }
-        if (goodBracket != null) stationName = stripBrackets(goodBracket)
-
-        // S0: 显式标签（取件地址/收货地址/代收点地址/取件点…）——最可靠的地址信号，最高优先级
-        val explicit = listOf("取件点位置", "取件地址", "收货地址", "代收点地址", "取件点")
-        for (lineIdx in lines.indices) {
-            val line = lines[lineIdx]
-            for (p in explicit) {
-                val i = line.text.indexOf(p)
-                if (i < 0) continue
-                var a = line.text.substring(i + p.length).trimStart(':', '：', ' ')
-                for (sep in listOf('|', '｜')) {
-                    val bar = a.indexOf(sep)
-                    if (bar >= 0) { if (stationName.isEmpty()) stationName = extractStationName(a.substring(0, bar).trim()); a = a.substring(bar + 1).trim() }
-                }
-                a = cleanAddress(a)
-                // 标签后若空/太短（值可能在下一行），向下拼 1~2 行续行
-                if (fullAddress.isEmpty() && !isAddressLike(a) && lineIdx + 1 < lines.size) {
-                    val cont = StringBuilder()
-                    for (j in lineIdx + 1 until minOf(lineIdx + 3, lines.size)) {
-                        val c = lines[j].text.trim()
-                        if (c.isEmpty()) continue
-                        if (c.first().isDigit() || c.startsWith("|")) break
-                        cont.append(c)
-                    }
-                    val combined = cleanAddress(a + cont.toString())
-                    if (isAddressLike(combined)) a = combined
-                }
-                // 折叠地址补全：S0-label 抓到的地址若只到省市区层级（缺路/街/号/店等街道/网点特征），
-                // 折叠地址补全：S0-label 抓到的地址可能是被 UI 折叠的短串（如“…育新北展开”或“【xx店:..”），
-                // 而同屏另有更具体的完整街道地址行（快递正文，如 育新路北段爱玛电动车旁边）。
-                // 判断标准：存在比 a 更长、像地址、无折叠残留(未闭合括号/省略号/展开) 且含明确街道特征的行 → 就用它替换。
-                val streetLike = listOf("路", "街", "巷", "弄", "道", "号店", "小区", "苑", "大厦", "超市", "驿站", "快柜", "智柜", "村", "庄")
-                val adminLike = listOf("省", "市", "县", "区")
-                // 折叠残留检测：a 以未闭合括号开头（如 【xx店，右括号被截断），或含 …/.. 省略号痕迹
-                val uncleanA = a.startsWith("【") || a.startsWith("（") || a.startsWith("(") ||
-                    a.contains("..") || a.contains("…")
-                val better = lines
+    /** S0b: "地址:" 标签后跟地址（调用点守卫：地址为空才跑）。 */
+    private fun stepAddrLabel(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S0b: 地址: 后跟收货地址（如 收货地址:河南省周口市郸城县育新北…）
+    // 逐行匹配标签值，避免 ADDR_LABEL 在整屏 allText 上贪婪匹配到无关行尾噪声
+    if (st.fullAddress.isEmpty()) {
+        val labelLine = lines.firstOrNull { it.text.trim().contains(REG_ADDR_LABEL_MARK) }
+        if (labelLine != null) {
+            val a0 = cleanAddress(ADDR_LABEL.find(labelLine.text)?.groupValues?.get(1).orEmpty())
+            // ①同前缀更长地址行(完整地址与标签同屏出现时优先)
+            var a = a0
+            if (isAddressLike(a0) && a0.length >= MIN_ADDRESS_CORE_LEN) {
+                val p4 = a0.substring(0, MIN_ADDRESS_CORE_LEN)
+                val byPrefix = lines
                     .map { it.text.trim() }
-                    .filter {
-                        it.length in 6..60 &&
-                            it.length > a.length &&
-                            streetLike.any { s -> it.contains(s) } &&
-                            adminLike.none { ad -> it.contains(ad) } &&
-                            listOf("电话", "..", "拨打", "联系", "展开", "【", "（", "(").none { it2 -> it.contains(it2) } &&
-                            isAddressLike(it)
-                    }
+                    .filter { it.length > a0.length && it.startsWith(p4) && isAddressLike(it) }
                     .maxByOrNull { it.length }
-                // 条件：a 有折叠残留，或（a 是地址但缺明确街道特征时，且能找到更长完整行）→ 替换
-                if (better != null && better != a &&
-                    (uncleanA || streetLike.none { a.contains(it) })) {
-                    a = better
+                if (byPrefix != null) a = byPrefix
+            }
+            // ②标签值退化(短/OCR读重如 地址:育新路育新路育)时，取「标签行下方邻近」的干净完整地址，
+            // 按 labelLine 的 y 定位同一通知卡片区域，避免错抓同屏其它驿站(不同通知)的地址。
+            // 用彼此重复兜底：标签行下方的更长地址行优先于退化标签值。
+            val labY = labelLine.boundingBox?.let { it.top.toFloat() } ?: 0f
+            val nearbyBest = lines
+                .filter { tl ->
+                    val y = tl.boundingBox?.let { it.top.toFloat() } ?: 0f
+                    y > labY && y - labY < LABEL_NEARBY_Y_GAP && tl.text.trim().length > a0.length
                 }
-                if (fullAddress.isEmpty() && isAddressLike(a)) {
-                    fullAddress = a.take(80)
-                    addrFrom = "S0-label"
-                    if (stationName.isEmpty()) stationName = extractStationName(a)
-                }
+                .map { it.text.trim() }
+                .filter { it.length >= MIN_ADDRESS_CORE_LEN && isAddressLike(it) }
+                .maxByOrNull { it.length }
+            if (nearbyBest != null) a = nearbyBest
+            if (isAddressLike(a)) {
+                st.fullAddress = a.take(MAX_ADDRESS_LEN)
+                st.addrFrom = "S0b-addrLabel"
+                if (st.stationName.isEmpty()) st.stationName = extractStationName(a)
             }
         }
-        // S0b: 地址: 后跟收货地址（如 收货地址:河南省周口市郸城县育新北…）
-        // 逐行匹配标签值，避免 ADDR_LABEL 在整屏 allText 上贪婪匹配到无关行尾噪声
-        if (fullAddress.isEmpty()) {
-            val labelLine = lines.firstOrNull { it.text.trim().contains(Regex("地址[:：]")) }
-            if (labelLine != null) {
-                val a0 = cleanAddress(ADDR_LABEL.find(labelLine.text)?.groupValues?.get(1).orEmpty())
-                // ①同前缀更长地址行(完整地址与标签同屏出现时优先)
-                var a = a0
-                if (isAddressLike(a0) && a0.length >= 4) {
-                    val p4 = a0.substring(0, 4)
-                    val byPrefix = lines
-                        .map { it.text.trim() }
-                        .filter { it.length > a0.length && it.startsWith(p4) && isAddressLike(it) }
-                        .maxByOrNull { it.length }
-                    if (byPrefix != null) a = byPrefix
-                }
-                // ②标签值退化(短/OCR读重如 地址:育新路育新路育)时，取「标签行下方邻近」的干净完整地址，
-                // 按 labelLine 的 y 定位同一通知卡片区域，避免错抓同屏其它驿站(不同通知)的地址。
-                // 用彼此重复兜底：标签行下方的更长地址行优先于退化标签值。
-                val labY = labelLine.boundingBox?.let { it.top.toFloat() } ?: 0f
-                val nearbyBest = lines
-                    .filter { tl ->
-                        val y = tl.boundingBox?.let { it.top.toFloat() } ?: 0f
-                        y > labY && y - labY < 300f && tl.text.trim().length > a0.length
-                    }
-                    .map { it.text.trim() }
-                    .filter { it.length >= 4 && isAddressLike(it) }
-                    .maxByOrNull { it.length }
-                if (nearbyBest != null) a = nearbyBest
-                if (isAddressLike(a)) {
-                    fullAddress = a.take(80)
-                    addrFrom = "S0b-addrLabel"
-                    if (stationName.isEmpty()) stationName = extractStationName(a)
+    }
+    }
+
+    /** S0c: 两列键值布局（5G 消息卡片，centerY 对齐）。 */
+    private fun stepColumnLayout(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S0c: 两列键值布局（5G消息卡片）——标签在左列，值在右列同一横带，地址续行在下方同列
+    // 例：LINE[取件地址 y=942 x=107] + LINE[育新路北段店 y=942 x=380] + LINE[育新路…爱玛电动车 y=1032 x=380]
+    if (st.fullAddress.isEmpty()) {
+        val labelKw = listOf("取件地址", "取件点位置", "代收点地址", "取件点", "地址")
+        for (labLine in lines) {
+            val labBox = labLine.boundingBox ?: continue
+            if (!labelKw.any { labLine.text.contains(it) }) continue
+            // 找同一横带的右侧值行（y 接近 + 值在标签右边）
+            val valueLine = lines.firstOrNull { v ->
+                val vb = v.boundingBox ?: return@firstOrNull false
+                vb !== labBox &&
+                    kotlin.math.abs(vb.centerY() - labBox.centerY()) < COLUMN_BAND_Y_TOL &&
+                    vb.left > labBox.right
+            } ?: continue
+            // 拼接值行 + 下方同列（地址续行）
+            val valueTxt = valueLine.text.trim()
+            val valueBox = valueLine.boundingBox ?: continue
+            val sb = StringBuilder()
+            var curY = valueBox.bottom
+            for (contLine in lines) {
+                val cb = contLine.boundingBox ?: continue
+                if (cb.centerY() > curY && cb.centerY() - curY < COLUMN_CONTINUE_Y_GAP &&
+                    kotlin.math.abs(cb.left - valueBox.left) < COLUMN_SAME_X_TOL) {
+                    sb.append(contLine.text.trim())
+                    curY = cb.bottom
                 }
             }
-        }
-
-        // S0c: 两列键值布局（5G消息卡片）——标签在左列，值在右列同一横带，地址续行在下方同列
-        // 例：LINE[取件地址 y=942 x=107] + LINE[育新路北段店 y=942 x=380] + LINE[育新路…爱玛电动车 y=1032 x=380]
-        if (fullAddress.isEmpty()) {
-            val labelKw = listOf("取件地址", "取件点位置", "代收点地址", "取件点", "地址")
-            for (labLine in lines) {
-                val labBox = labLine.boundingBox ?: continue
-                if (!labelKw.any { labLine.text.contains(it) }) continue
-                // 找同一横带的右侧值行（y 接近 + 值在标签右边）
-                val valueLine = lines.firstOrNull { v ->
-                    val vb = v.boundingBox ?: return@firstOrNull false
-                    vb !== labBox &&
-                        kotlin.math.abs(vb.centerY() - labBox.centerY()) < 60 &&
-                        vb.left > labBox.right
-                } ?: continue
-                // 拼接值行 + 下方同列（地址续行）
-                val valueTxt = valueLine.text.trim()
-                val valueBox = valueLine.boundingBox ?: continue
-                val sb = StringBuilder()
-                var curY = valueBox.bottom
-                for (contLine in lines) {
-                    val cb = contLine.boundingBox ?: continue
-                    if (cb.centerY() > curY && cb.centerY() - curY < 120 &&
-                        kotlin.math.abs(cb.left - valueBox.left) < 40) {
-                        sb.append(contLine.text.trim())
-                        curY = cb.bottom
-                    }
-                }
-                val contTxt = sb.toString()
-                // 若续行已包含取值行的核心地址（前4字），直接用更完整的续行，避免重复拼接
-                // （例：取值行=育新路北段店，续行=育新路育新路育新路北段爱玛电动车旁边 → 只用续行）
-                val core = if (valueTxt.length >= 4) valueTxt.substring(0, 4) else valueTxt
-                val usesValue = valueTxt.length < 4 || !contTxt.contains(core)
-                val a = cleanAddress(if (usesValue) (valueTxt + contTxt) else contTxt)
-                if (fullAddress.isEmpty() && a.isNotEmpty() && isAddressLike(a)) {
-                    fullAddress = a.take(80)
-                    addrFrom = "S0c-column"
-                    if (stationName.isEmpty()) stationName = extractStationName(a)
-                }
+            val contTxt = sb.toString()
+            // 若续行已包含取值行的核心地址（前4字），直接用更完整的续行，避免重复拼接
+            // （例：取值行=育新路北段店，续行=育新路育新路育新路北段爱玛电动车旁边 → 只用续行）
+            val core = if (valueTxt.length >= MIN_ADDRESS_CORE_LEN) valueTxt.substring(0, MIN_ADDRESS_CORE_LEN) else valueTxt
+            val usesValue = valueTxt.length < MIN_ADDRESS_CORE_LEN || !contTxt.contains(core)
+            val a = cleanAddress(if (usesValue) (valueTxt + contTxt) else contTxt)
+            if (st.fullAddress.isEmpty() && a.isNotEmpty() && isAddressLike(a)) {
+                st.fullAddress = a.take(MAX_ADDRESS_LEN)
+                st.addrFrom = "S0c-column"
+                if (st.stationName.isEmpty()) st.stationName = extractStationName(a)
             }
         }
+    }
+    }
 
-        // S2: pipe-separated "shop | address"
-        if (fullAddress.isEmpty()) {
-            for (line in lines) {
-                for (sep in listOf('|', '｜')) {
-                    val bar = line.text.indexOf(sep)
-                    if (bar < 0) continue
-                    val left = line.text.substring(0, bar).trim()
-                    val right = line.text.substring(bar + 1).trim()
-                    if (stationName.isEmpty() && isAddressLike(left).not() && left.isNotBlank()) {
-                        stationName = extractStationName(left)
-                    }
-                    if (fullAddress.isEmpty() && right.isNotBlank() && isAddressLike(right)) {
-                        // 长地址可能被 OCR 拆到相邻多行：先向下拼 1~3 行，拼完仍像地址且非空则用拼接结果，否则退回单行
-                        val parts = mutableListOf(right)
-                        var cursorY = line.boundingBox?.bottom
-                        for (j in lines.indexOf(line) + 1 until minOf(lines.indexOf(line) + 4, lines.size)) {
-                            val n = lines[j]
-                            val nBox = n.boundingBox
-                            if (nBox != null && cursorY != null && nBox.top - cursorY > 600) break
-                            val nt = n.text.trim()
-                            if (nt.isEmpty()) continue
-                            if (nt.length < 2 || nt.first().isDigit() || nt.startsWith("|") ||
-                                listOf("展开", "收起", "复制", "拨打", "导航", "昨天", "今天", "消息", "通知").any { nt.contains(it) }) break
-                            parts.add(nt)
-                            cursorY = nBox?.bottom ?: cursorY
-                        }
-                        val joinedAddr = parts.joinToString("")
-                        val finalAddr = if (isAddressLike(joinedAddr) && joinedAddr.length > right.length) joinedAddr else right
-                        fullAddress = stripBrackets(finalAddr).take(80); addrFrom = "S2-pipe"
-                    }
+    /** S2: "门店 | 地址" 管道分隔行。 */
+    private fun stepPipeSeparated(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S2: pipe-separated "shop | address"
+    if (st.fullAddress.isEmpty()) {
+        for (line in lines) {
+            for (sep in listOf('|', '｜')) {
+                val bar = line.text.indexOf(sep)
+                if (bar < 0) continue
+                val left = line.text.substring(0, bar).trim()
+                val right = line.text.substring(bar + 1).trim()
+                if (st.stationName.isEmpty() && isAddressLike(left).not() && left.isNotBlank()) {
+                    st.stationName = extractStationName(left)
                 }
-            }
-        }
-
-        // S5: "已放至/已暂存至" pattern
-        if (fullAddress.isEmpty()) {
-            ADDR_PLACED.find(allText)?.let { m ->
-                val a = m.groupValues[1].trim()
-                if (isAddressLike(a)) { fullAddress = stripBrackets(a).take(80); addrFrom = "S5-placed" }
-            }
-        }
-
-        // S6: "到...取件/领取/门店/取运单" template (SMS/APP style)
-        // Scope to lines containing 凭/取件 to avoid greedy match across unrelated 到 in joined text.
-        // 合并自 S6a（单行）+ S6b（跨行）：先试单行，单行失败再向前拼 1~3 行，触发词判断与后处理复用同一套。
-        if (fullAddress.isEmpty()) {
-            for (i in lines.indices) {
-                val line = lines[i]
-                val hasTrigger = line.text.contains("凭") || line.text.contains("取件") || line.text.contains("取运单") ||
-                    line.text.contains("取您") || line.text.contains("取你的") || line.text.contains("取走")
-                if (!hasTrigger) continue
-
-                // S6a: 单行内匹配
-                ADDR_AFTER_TO.find(line.text)?.let { m6 ->
-                    val a = m6.groupValues[1].trim()
-                    val clean = a.replace(PING_NOISE_TRAIL, "").trim()
-                    if (isAddressLike(clean)) {
-                        fullAddress = stripBrackets(clean).take(80)
-                        addrFrom = "S6a"
-                        if (stationName.isEmpty()) stationName = extractStationName(clean)
-                        return@let
-                    }
-                }
-                if (fullAddress.isNotEmpty()) break
-
-                // S6b: 跨行匹配——OCR 常把「到<地址>」和「取运单…」拆成多个 TextLine，
-                // 拼接前 1~3 行（结束词「取您/取件」可能在 3 行外）
-                for (span in 1..3) {
-                    if (i - span < 0) break
-                    val start = i - span
-                    val combined = (start until i).joinToString(" ") { lines[it].text } + " " + line.text
-                    ADDR_AFTER_TO.find(combined)?.let { m6 ->
-                        val a = m6.groupValues[1].trim()
-                        val clean = a.replace(PING_NOISE_TRAIL, "").trim()
-                        if (isAddressLike(clean)) {
-                            fullAddress = stripBrackets(clean).take(80)
-                            addrFrom = "S6b"
-                            if (stationName.isEmpty()) stationName = extractStationName(clean)
-                            return@let
-                        }
-                    }
-                }
-                if (fullAddress.isNotEmpty()) break
-            }
-        }
-
-        // S7: cabinet number + address from "号柜" line
-        for (idx in lines.indices) {
-            val line = lines[idx]
-            if (!line.text.contains("号柜")) continue
-            CABINET_NUM.find(line.text)?.let { cabinet = it.groupValues[1] }
-            var s7addr = stripBrackets(line.text.trim())
-            // 若本行不够像地址（柜号行常只有「2号柜」），向上拼 1~2 行的地址前缀
-            if (!isAddressLike(s7addr) && idx > 0) {
-                val up = StringBuilder()
-                for (j in (idx - 2).coerceAtLeast(0) until idx) {
-                    val u = lines[j].text.trim()
-                    if (u.isEmpty()) continue
-                    up.append(u)
-                }
-                val cand = (up.toString() + s7addr)
-                if (isAddressLike(cand)) s7addr = cand.take(80)
-            }
-            if (fullAddress.isEmpty() && isAddressLike(s7addr))
-                { fullAddress = stripBrackets(s7addr).take(80); addrFrom = "S7-cabinet" }
-        }
-
-        // S8: nearby lines after prefix keywords
-        val prefixes = explicit + listOf("代收点", "地址", "号柜")
-        for (i in lines.indices) {
-            if (!prefixes.any { lines[i].text.contains(it) }) continue
-            if (stationName.isEmpty()) stationName = extractStationName(lines[i].text)
-            for (j in i + 1..minOf(i + 2, lines.lastIndex)) {
-                if (fullAddress.isNotEmpty()) break
-                val n = lines[j].text.trim()
-                if (!isAddressLike(n)) continue
-                // 命中后向下拼 1~2 行地址续行（跳过单字/数字/噪声行）
-                var s8addr = stripBrackets(n).take(80)
-                if (s8addr.length < 80) {
-                    val contParts = mutableListOf(s8addr)
-                    for (k in j + 1 until minOf(j + 3, lines.size)) {
-                        val c = lines[k].text.trim()
-                        if (c.isEmpty()) break
-                        if (c.length < 2 || c.first().isDigit() || c.startsWith("|") ||
-                            listOf("展开", "收起", "复制", "拨打", "导航", "昨天", "今天", "消息", "通知").any { c.contains(it) }) break
-                        contParts.add(c)
-                    }
-                    val joined = contParts.joinToString("")
-                    if (isAddressLike(joined)) s8addr = joined.take(80)
-                }
-                fullAddress = s8addr; addrFrom = "S8-nearby"; break
-            }
-        }
-
-        // S9: parenthesized address
-        if (fullAddress.isEmpty()) {
-            for (line in lines) {
-                val m = PAREN_ADDR.find(line.text)
-                if (m != null && isAddressLike(m.groupValues[1])) {
-                    fullAddress = stripBrackets(m.groupValues[1]).take(80); addrFrom = "S9-paren"; break
-                }
-            }
-        }
-
-        // S10: fallback - any line with road/street/cabinet indicators
-        if (fullAddress.isEmpty()) {
-            for (idx in lines.indices) {
-                val line = lines[idx]
-                if (stationName.isEmpty()) stationName = extractStationName(line.text)
-                if (!line.text.contains(ADDR_PIPE_FULL) || !isAddressLike(line.text.trim())) continue
-                // 向下续行拼接：OCR 常把地址拆成相邻多行（如 申通快/谦/申通快递）
-                var addrBase = stripBrackets(line.text.trim())
-                if (addrBase.length < 80) {
+                if (st.fullAddress.isEmpty() && right.isNotBlank() && isAddressLike(right)) {
+                    // 长地址可能被 OCR 拆到相邻多行：先向下拼 1~3 行，拼完仍像地址且非空则用拼接结果，否则退回单行
+                    val parts = mutableListOf(right)
                     var cursorY = line.boundingBox?.bottom
-                    val parts = mutableListOf(addrBase)
-                    for (j in idx + 1 until minOf(idx + 4, lines.size)) {
+                    for (j in lines.indexOf(line) + 1 until minOf(lines.indexOf(line) + 4, lines.size)) {
                         val n = lines[j]
                         val nBox = n.boundingBox
-                        // 纵 gap 过大（>600px）说明不是同一地址块，停止
-                        if (nBox != null && cursorY != null && nBox.top - cursorY > 600) break
+                        if (nBox != null && cursorY != null && nBox.top - cursorY > ADDR_LINE_GAP_MAX) break
                         val nt = n.text.trim()
                         if (nt.isEmpty()) continue
-                        // 过滤单字错字（OCR 拆出的笔画字，如 谦）与非地址噪声行
-                        if (nt.length < 2) continue
-                        if (nt.first().isDigit() || nt.startsWith("|") || nt.startsWith("●") ||
-                            listOf("展开", "收起", "复制", "拨打", "导航", "昨天", "今天", "消息", "通知").any { nt.contains(it) }) break
+                        if (nt.length < 2 || nt.first().isDigit() || nt.startsWith("|") ||
+                            CONTINUE_BLOCK_WORDS.any { nt.contains(it) }) break
                         parts.add(nt)
                         cursorY = nBox?.bottom ?: cursorY
                     }
-                    val joined = parts.joinToString("")
-                    if (isAddressLike(joined)) { addrBase = joined.take(80) } else { addrBase = parts.first() }
+                    val joinedAddr = parts.joinToString("")
+                    val finalAddr = if (isAddressLike(joinedAddr) && joinedAddr.length > right.length) joinedAddr else right
+                    st.fullAddress = stripBrackets(finalAddr).take(MAX_ADDRESS_LEN); st.addrFrom = "S2-pipe"
                 }
-                fullAddress = addrBase; addrFrom = "S10-fallback"; break
             }
         }
-
-        // 后处理：快递柜/智能柜识别——在取件地址后追加柜名+柜号，并修正站名
-        val lockerName = STATION_TYPE_MAP.entries
-            .filter { it.value == StationType.LOCKER }
-            .map { it.key }
-            .sortedByDescending { it.length }
-            .firstOrNull { allText.contains(it) }
-        if (lockerName != null) {
-            // 劣质站名替换：动作前缀（已放入/待取件…）或“含数字的商品/规格名”（如 4.5英寸昧碟）都不是站名 → 换成柜名
-            val stationLooksBad = listOf("已放入", "已放至", "已暂存", "待取件", "待取", "已派送").any { stationName.startsWith(it) } ||
-                (stationName.any { it.isDigit() } &&
-                    STATION_TYPE_MAP.keys.none { stationName.contains(it) } &&
-                    ADDR_PIPE_FULL.containsMatchIn(stationName).not())
-            if (stationName.isNotEmpty() && stationName != lockerName && stationLooksBad) {
-                stationName = lockerName
-            }
-            if (fullAddress.isNotEmpty() && !fullAddress.contains(lockerName)) {
-                fullAddress = (fullAddress + lockerName).take(80)
-            }
-            // 追加柜号（如 2号柜）：地址若没有“X号柜”则补上
-            if (cabinet != null && cabinet!!.isNotEmpty() &&
-                !Regex("\\d+号柜").containsMatchIn(fullAddress)) {
-                fullAddress = (fullAddress + cabinet + "号柜").take(80)
-            }
-        }
-
-        // 折叠 OCR 重复的路名/站名（对 S2/S5/S10 等未走 cleanAddress 的路径也生效）
-        fullAddress = dedupeRepeated(fullAddress)
-
-        // Determine station type
-        val stype = classifyStation(stationName, fullAddress, allText)
-
-        // If station name still empty, try to extract from full address or all text
-        if (stationName.isEmpty()) {
-            stationName = extractStationName(fullAddress)
-        }
-        if (stationName.isEmpty()) {
-            stationName = extractStationName(allText)
-        }
-
-        android.util.Log.d("CodeExtrDiag",
-            "ADDR=full=[$fullAddress] from=[$addrFrom] station=[$stationName] cabinet=[$cabinet] type=[$stype] allText=" + allText)
-
-        return PickupLocation(
-            stationName = stationName.ifEmpty { "未知站点" },
-            stationType = stype,
-            cabinetNumber = cabinet,
-            fullAddress = fullAddress
-        )
     }
+    }
+
+    /** S5: "已放至/已暂存至" 句式。 */
+    private fun stepPlacedPhrase(allText: String, st: LocationState) {
+    // S5: "已放至/已暂存至" pattern
+    if (st.fullAddress.isEmpty()) {
+        ADDR_PLACED.find(allText)?.let { m ->
+            val a = m.groupValues[1].trim()
+            if (isAddressLike(a)) { st.fullAddress = stripBrackets(a).take(MAX_ADDRESS_LEN); st.addrFrom = "S5-placed" }
+        }
+    }
+    }
+
+    /** S6/S6b: "到...取件" 单行+跨行（1~3 行回拼）。 */
+    private fun stepAfterToPhrase(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S6: "到...取件/领取/门店/取运单" template (SMS/APP style)
+    // Scope to lines containing 凭/取件 to avoid greedy match across unrelated 到 in joined text.
+    // 合并自 S6a（单行）+ S6b（跨行）：先试单行，单行失败再向前拼 1~3 行，触发词判断与后处理复用同一套。
+    if (st.fullAddress.isEmpty()) {
+        for (i in lines.indices) {
+            val line = lines[i]
+            val hasTrigger = line.text.contains("凭") || line.text.contains("取件") || line.text.contains("取运单") ||
+                line.text.contains("取您") || line.text.contains("取你的") || line.text.contains("取走")
+            if (!hasTrigger) continue
+
+            // S6a: 单行内匹配
+            ADDR_AFTER_TO.find(line.text)?.let { m6 ->
+                val a = m6.groupValues[1].trim()
+                val clean = a.replace(PING_NOISE_TRAIL, "").trim()
+                if (isAddressLike(clean)) {
+                    st.fullAddress = stripBrackets(clean).take(MAX_ADDRESS_LEN)
+                    st.addrFrom = "S6a"
+                    if (st.stationName.isEmpty()) st.stationName = extractStationName(clean)
+                    return@let
+                }
+            }
+            if (st.fullAddress.isNotEmpty()) break
+
+            // S6b: 跨行匹配——OCR 常把「到<地址>」和「取运单…」拆成多个 TextLine，
+            // 拼接前 1~3 行（结束词「取您/取件」可能在 3 行外）
+            for (span in 1..CARD_LINE_WINDOW) {
+                if (i - span < 0) break
+                val start = i - span
+                val combined = (start until i).joinToString(" ") { lines[it].text } + " " + line.text
+                ADDR_AFTER_TO.find(combined)?.let { m6 ->
+                    val a = m6.groupValues[1].trim()
+                    val clean = a.replace(PING_NOISE_TRAIL, "").trim()
+                    if (isAddressLike(clean)) {
+                        st.fullAddress = stripBrackets(clean).take(MAX_ADDRESS_LEN)
+                        st.addrFrom = "S6b"
+                        if (st.stationName.isEmpty()) st.stationName = extractStationName(clean)
+                        return@let
+                    }
+                }
+            }
+            if (st.fullAddress.isNotEmpty()) break
+        }
+    }
+    }
+
+    /** S7: 号柜行——无守卫，cabinet 无条件更新（拆分后不得加 early-return）。 */
+    private fun stepCabinetLine(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S7: cabinet number + address from "号柜" line
+    for (idx in lines.indices) {
+        val line = lines[idx]
+        if (!line.text.contains("号柜")) continue
+        CABINET_NUM.find(line.text)?.let { st.cabinet = it.groupValues[1] }
+        var s7addr = stripBrackets(line.text.trim())
+        // 若本行不够像地址（柜号行常只有「2号柜」），向上拼 1~2 行的地址前缀
+        if (!isAddressLike(s7addr) && idx > 0) {
+            val up = StringBuilder()
+            for (j in (idx - 2).coerceAtLeast(0) until idx) {
+                val u = lines[j].text.trim()
+                if (u.isEmpty()) continue
+                up.append(u)
+            }
+            val cand = (up.toString() + s7addr)
+            if (isAddressLike(cand)) s7addr = cand.take(MAX_ADDRESS_LEN)
+        }
+        if (st.fullAddress.isEmpty() && isAddressLike(s7addr))
+            { st.fullAddress = stripBrackets(s7addr).take(MAX_ADDRESS_LEN); st.addrFrom = "S7-cabinet" }
+    }
+    }
+
+    /** S8: 前缀关键词邻近行（无守卫，stationName 填充无条件）。 */
+    private fun stepNearbyPrefix(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S8: nearby lines after prefix keywords
+    val prefixes = EXPLICIT_LABELS + listOf("代收点", "地址", "号柜")
+    for (i in lines.indices) {
+        if (!prefixes.any { lines[i].text.contains(it) }) continue
+        if (st.stationName.isEmpty()) st.stationName = extractStationName(lines[i].text)
+        for (j in i + 1..minOf(i + 2, lines.lastIndex)) {
+            if (st.fullAddress.isNotEmpty()) break
+            val n = lines[j].text.trim()
+            if (!isAddressLike(n)) continue
+            // 命中后向下拼 1~2 行地址续行（跳过单字/数字/噪声行）
+            var s8addr = stripBrackets(n).take(MAX_ADDRESS_LEN)
+            if (s8addr.length < MAX_ADDRESS_LEN) {
+                val contParts = mutableListOf(s8addr)
+                for (k in j + 1 until minOf(j + CARD_LINE_WINDOW, lines.size)) {
+                    val c = lines[k].text.trim()
+                    if (c.isEmpty()) break
+                    if (c.length < 2 || c.first().isDigit() || c.startsWith("|") ||
+                        CONTINUE_BLOCK_WORDS.any { c.contains(it) }) break
+                    contParts.add(c)
+                }
+                val joined = contParts.joinToString("")
+                if (isAddressLike(joined)) s8addr = joined.take(MAX_ADDRESS_LEN)
+            }
+            st.fullAddress = s8addr; st.addrFrom = "S8-nearby"; break
+        }
+    }
+    }
+
+    /** S9: 全角括号内地址。 */
+    private fun stepParenthesized(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S9: parenthesized address
+    if (st.fullAddress.isEmpty()) {
+        for (line in lines) {
+            val m = PAREN_ADDR.find(line.text)
+            if (m != null && isAddressLike(m.groupValues[1])) {
+                st.fullAddress = stripBrackets(m.groupValues[1]).take(MAX_ADDRESS_LEN); st.addrFrom = "S9-paren"; break
+            }
+        }
+    }
+    }
+
+    /** S10: 兜底——含路/街/柜特征的行 + 向下续行拼接。 */
+    private fun stepFallback(lines: List<OCREngine.TextLine>, st: LocationState) {
+    // S10: fallback - any line with road/street/cabinet indicators
+    if (st.fullAddress.isEmpty()) {
+        for (idx in lines.indices) {
+            val line = lines[idx]
+            if (st.stationName.isEmpty()) st.stationName = extractStationName(line.text)
+            if (!line.text.contains(ADDR_PIPE_FULL) || !isAddressLike(line.text.trim())) continue
+            // 向下续行拼接：OCR 常把地址拆成相邻多行（如 申通快/谦/申通快递）
+            var addrBase = stripBrackets(line.text.trim())
+            if (addrBase.length < MAX_ADDRESS_LEN) {
+                var cursorY = line.boundingBox?.bottom
+                val parts = mutableListOf(addrBase)
+                for (j in idx + 1 until minOf(idx + 4, lines.size)) {
+                    val n = lines[j]
+                    val nBox = n.boundingBox
+                    // 纵 gap 过大（>600px）说明不是同一地址块，停止
+                    if (nBox != null && cursorY != null && nBox.top - cursorY > ADDR_LINE_GAP_MAX) break
+                    val nt = n.text.trim()
+                    if (nt.isEmpty()) continue
+                    // 过滤单字错字（OCR 拆出的笔画字，如 谦）与非地址噪声行
+                    if (nt.length < 2) continue
+                    if (nt.first().isDigit() || nt.startsWith("|") || nt.startsWith("●") ||
+                        CONTINUE_BLOCK_WORDS.any { nt.contains(it) }) break
+                    parts.add(nt)
+                    cursorY = nBox?.bottom ?: cursorY
+                }
+                val joined = parts.joinToString("")
+                if (isAddressLike(joined)) { addrBase = joined.take(MAX_ADDRESS_LEN) } else { addrBase = parts.first() }
+            }
+            st.fullAddress = addrBase; st.addrFrom = "S10-fallback"; break
+        }
+    }
+    }
+
+    /** 收尾：快递柜/智能柜识别——追加柜名+柜号，修正劣质站名。 */
+    private fun postProcessLocker(allText: String, st: LocationState) {
+    // 后处理：快递柜/智能柜识别——在取件地址后追加柜名+柜号，并修正站名
+    val lockerName = STATION_TYPE_MAP.entries
+        .filter { it.value == StationType.LOCKER }
+        .map { it.key }
+        .sortedByDescending { it.length }
+        .firstOrNull { allText.contains(it) }
+    if (lockerName != null) {
+        // 劣质站名替换：动作前缀（已放入/待取件…）或“含数字的商品/规格名”（如 4.5英寸昧碟）都不是站名 → 换成柜名
+        val stationLooksBad = listOf("已放入", "已放至", "已暂存", "待取件", "待取", "已派送").any { st.stationName.startsWith(it) } ||
+            (st.stationName.any { it.isDigit() } &&
+                STATION_TYPE_MAP.keys.none { st.stationName.contains(it) } &&
+                ADDR_PIPE_FULL.containsMatchIn(st.stationName).not())
+        if (st.stationName.isNotEmpty() && st.stationName != lockerName && stationLooksBad) {
+            st.stationName = lockerName
+        }
+        if (st.fullAddress.isNotEmpty() && !st.fullAddress.contains(lockerName)) {
+            st.fullAddress = (st.fullAddress + lockerName).take(MAX_ADDRESS_LEN)
+        }
+        // 追加柜号（如 2号柜）：地址若没有“X号柜”则补上
+        if (st.cabinet != null && st.cabinet!!.isNotEmpty() &&
+            !Regex("\\d+号柜").containsMatchIn(st.fullAddress)) {
+            st.fullAddress = (st.fullAddress + st.cabinet + "号柜").take(MAX_ADDRESS_LEN)
+        }
+    }
+    }
+
+    /** 结束：折叠重复、归类站点、调试日志、组装 [PickupLocation]。 */
+    private fun buildLocation(lines: List<OCREngine.TextLine>, allText: String, st: LocationState): PickupLocation {
+    // 折叠 OCR 重复的路名/站名（对 S2/S5/S10 等未走 cleanAddress 的路径也生效）
+    st.fullAddress = dedupeRepeated(st.fullAddress)
+
+    // Determine station type
+    val stype = classifyStation(st.stationName, st.fullAddress, allText)
+
+    // If station name still empty, try to extract from full address or all text
+    if (st.stationName.isEmpty()) {
+        st.stationName = extractStationName(st.fullAddress)
+    }
+    if (st.stationName.isEmpty()) {
+        st.stationName = extractStationName(allText)
+    }
+
+    android.util.Log.d("CodeExtrDiag",
+        "ADDR=full=[${st.fullAddress}] from=[${st.addrFrom}] station=[${st.stationName}] cabinet=[${st.cabinet}] type=[$stype] allText=" + allText)
+
+    return PickupLocation(
+        stationName = st.stationName.ifEmpty { "未知站点" },
+        stationType = stype,
+        cabinetNumber = st.cabinet,
+        fullAddress = st.fullAddress
+    )
+    }
+
 
     /**
      * 按码定位提取专属地址（多驿站通知中心场景）。
@@ -495,11 +600,11 @@ object AddressExtractor {
 
         fun inWindow(otherIdx: Int): Boolean {
             if (otherIdx == codeIdx) return false
-            if (kotlin.math.abs(otherIdx - codeIdx) > 3) return false
+            if (kotlin.math.abs(otherIdx - codeIdx) > CARD_LINE_WINDOW) return false
             val b = lines[otherIdx].boundingBox ?: return true
             val cIdxBox = lines[codeIdx].boundingBox
             if (cIdxBox != null && codeBoxTop != null) {
-                return kotlin.math.abs(b.top.toFloat() - codeBoxTop) <= 400f
+                return kotlin.math.abs(b.top.toFloat() - codeBoxTop) <= CARD_WINDOW_Y_GAP
             }
             return true
         }
@@ -514,52 +619,52 @@ object AddressExtractor {
         // 优先级 1：S6 「到…取件/取用」句式（通知体最常见的地址锚点）
         // 地址可能跨行（LINE8“…到育新路与季庄街…社区卫生” + LINE9“所对面2号柜H36…取您的快递”）
         // 仅在本码 ±3 行的窗口内找；含「到」即尝试（同码头尾地址常在码行，无需同行的取件词）
-        val lo = (codeIdx - 3).coerceAtLeast(0)
-        val hi = (codeIdx + 3).coerceAtMost(lines.lastIndex)
+        val lo = (codeIdx - CARD_LINE_WINDOW).coerceAtLeast(0)
+        val hi = (codeIdx + CARD_LINE_WINDOW).coerceAtMost(lines.lastIndex)
         for (i in lo..hi) {
             val t = lines[i].text
             if (!t.contains("到")) continue
             // 单行先试（排除"到达/已到达"动词：捕获以"达"开头说明是"到达xx"误抽，非地址介词"到"）
             ADDR_AFTER_TO.find(t)?.let { m6 ->
                 val clean0 = m6.groupValues[1].trim().replace(PING_NOISE_TRAIL, "").trim()
-                if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(80)
+                if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(MAX_ADDRESS_LEN)
             }
             // 跨行向下拼接 1~3 行
-            for (span in 1..3) {
+            for (span in 1..CARD_LINE_WINDOW) {
                 if (i + span >= lines.size) break
                 val combined = (i..i + span).joinToString("") { lines[it].text }
                 ADDR_AFTER_TO.find(combined)?.let { m6b ->
                     val clean0 = m6b.groupValues[1].trim().replace(PING_NOISE_TRAIL, "").trim()
-                    if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(80)
+                    if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(MAX_ADDRESS_LEN)
                 }
             }
         }
 
         // 优先级 2：地址: 标签
         // 优先级 2：地址: 标签（含退化标签补全——如 地址:育新路育新路育 时取下方干净地址行）
-        val labLine = windowLines.firstOrNull { it.text.contains(Regex("地址[:：]")) }
+        val labLine = windowLines.firstOrNull { it.text.contains(REG_ADDR_LABEL_MARK) }
         if (labLine != null) {
             val a0 = cleanAddress(ADDR_LABEL.find(labLine.text)?.groupValues?.get(1).orEmpty())
-            if (isAddressLike(a0) && a0.length >= 4) {
+            if (isAddressLike(a0) && a0.length >= MIN_ADDRESS_CORE_LEN) {
                 // 前缀命中同行更完整行 或 同前缀更长行
-                val p4 = a0.substring(0, 4)
+                val p4 = a0.substring(0, MIN_ADDRESS_CORE_LEN)
                 val byPrefix = windowLines.map { it.text.trim() }
                     .filter { it.length > a0.length && it.startsWith(p4) && isAddressLike(it) }
                     .maxByOrNull { it.length }
-                if (byPrefix != null) return byPrefix.take(80)
+                if (byPrefix != null) return byPrefix.take(MAX_ADDRESS_LEN)
             }
             // 标签值退化/短时：取标签行下方邻近的干净完整地址（同一通知卡片区域）
             val labY = labLine.boundingBox?.let { it.top.toFloat() } ?: 0f
             val nearby = windowLines
                 .filter { tl ->
                     val y = tl.boundingBox?.let { it.top.toFloat() } ?: 0f
-                    y > labY && y - labY < 300f && tl.text.trim().length > a0.length
+                    y > labY && y - labY < LABEL_NEARBY_Y_GAP && tl.text.trim().length > a0.length
                 }
                 .map { it.text.trim() }
-                .filter { it.length >= 4 && isAddressLike(it) }
+                .filter { it.length >= MIN_ADDRESS_CORE_LEN && isAddressLike(it) }
                 .maxByOrNull { it.length }
-            if (nearby != null) return nearby.take(80)
-            if (isAddressLike(a0)) return a0.take(80)
+            if (nearby != null) return nearby.take(MAX_ADDRESS_LEN)
+            if (isAddressLike(a0)) return a0.take(MAX_ADDRESS_LEN)
         }
 
         // 优先级 3：窗口内最长的像地址行
@@ -567,7 +672,7 @@ object AddressExtractor {
             .map { it.text.trim() }
             .filter { isAddressLike(it) }
             .maxByOrNull { it.length }
-        return best?.take(80) ?: ""
+        return best?.take(MAX_ADDRESS_LEN) ?: ""
     }
 
     /** Backward-compatible: return address string from structured location. */
@@ -711,7 +816,7 @@ object AddressExtractor {
 
     private fun isAddressLike(s: String): Boolean {
         val t = stripBrackets(s)
-        if (t.length !in 4..80 || t.none { it in '\u4e00'..'\u9fff' }) return false
+        if (t.length !in MIN_ADDRESS_CORE_LEN..MAX_ADDRESS_LEN || t.none { it in '\u4e00'..'\u9fff' }) return false
         // Must contain address indicators (road/street/building/cabinet etc)
         // 「元」会与货币/金额冲突（如 累计省4元>、¥9.9元、实付¥8.90）——只有 单元/几单元 里的 元 才算地址指示符
         val pipeChars = ADDR_PIPE_FULL.findAll(t).map { it.value }.toList()
