@@ -27,6 +27,37 @@ object AddressExtractor {
     // 「地址:」标签标记（S0b 与 extractAddressForCode 共用）
     private val REG_ADDR_LABEL_MARK = Regex("地址[:：]")
 
+    // ---------------------------------------------------------------
+    // 长度/几何容差常量（各步骤共用，按语义分开命名）
+    // ---------------------------------------------------------------
+
+    /** 地址/站名长度上限（take(80) 截断 + isAddressLike 上限，20+ 处共用）。 */
+    private const val MAX_ADDRESS_LEN = 80
+
+    /** 地址核心长度下限（候选少于 4 字符不算地址/标签值）。 */
+    private const val MIN_ADDRESS_CORE_LEN = 4
+
+    /** S0c 列布局：标签与值中心 Y 容差。 */
+    private const val COLUMN_BAND_Y_TOL = 60
+
+    /** S0c 列布局：下一行中心 Y 继续收集的间隔上限。 */
+    private const val COLUMN_CONTINUE_Y_GAP = 120
+
+    /** S0c 列布局：值与标签左边缘 X 对齐容差。 */
+    private const val COLUMN_SAME_X_TOL = 40
+
+    /** S0b/S8 标签邻近行：Y 距离上限。 */
+    private const val LABEL_NEARBY_Y_GAP = 300f
+
+    /** S8 通知卡片：码行 ±3 行窗口（含 S6/S8 跨行拼接 1~3 行）。 */
+    private const val CARD_LINE_WINDOW = 3
+
+    /** S8 同卡片行距上限（超 400px 视为新卡片）。 */
+    private const val CARD_WINDOW_Y_GAP = 400f
+
+    /** S6/S8 跨行拼接：行间 Y 间隔超 600 视为断卡。 */
+    private const val ADDR_LINE_GAP_MAX = 600
+
     // 营销横幅/优惠标签词——出现这些词的片段不是店名/站名（如【新店福利】、满减、优惠券）
     private val PROMO_LABEL_WORDS = listOf("福利", "优惠", "满减", "红包", "立减", "折扣", "特惠", "会员")
     private val PING_NOISE_TRAIL = Regex("凭\\s*[A-Za-z0-9\\-]+\\s*$")
@@ -129,7 +160,7 @@ object AddressExtractor {
             break
         }
         if (couponAddr.isNotEmpty()) {
-            st.fullAddress = couponAddr.take(80)
+            st.fullAddress = couponAddr.take(MAX_ADDRESS_LEN)
             st.stationName = couponStation
             st.addrFrom = "SCoupon-store"
             // 若 isAddressLike 校验不通过（如门店串太短/不含地址特征），仍保留但降级以不改后续逻辑
@@ -173,7 +204,7 @@ object AddressExtractor {
             // 标签后若空/太短（值可能在下一行），向下拼 1~2 行续行
             if (st.fullAddress.isEmpty() && !isAddressLike(a) && lineIdx + 1 < lines.size) {
                 val cont = StringBuilder()
-                for (j in lineIdx + 1 until minOf(lineIdx + 3, lines.size)) {
+                for (j in lineIdx + 1 until minOf(lineIdx + CARD_LINE_WINDOW, lines.size)) {
                     val c = lines[j].text.trim()
                     if (c.isEmpty()) continue
                     if (c.first().isDigit() || c.startsWith("|")) break
@@ -208,7 +239,7 @@ object AddressExtractor {
                 a = better
             }
             if (st.fullAddress.isEmpty() && isAddressLike(a)) {
-                st.fullAddress = a.take(80)
+                st.fullAddress = a.take(MAX_ADDRESS_LEN)
                 st.addrFrom = "S0-label"
                 if (st.stationName.isEmpty()) st.stationName = extractStationName(a)
             }
@@ -226,8 +257,8 @@ object AddressExtractor {
             val a0 = cleanAddress(ADDR_LABEL.find(labelLine.text)?.groupValues?.get(1).orEmpty())
             // ①同前缀更长地址行(完整地址与标签同屏出现时优先)
             var a = a0
-            if (isAddressLike(a0) && a0.length >= 4) {
-                val p4 = a0.substring(0, 4)
+            if (isAddressLike(a0) && a0.length >= MIN_ADDRESS_CORE_LEN) {
+                val p4 = a0.substring(0, MIN_ADDRESS_CORE_LEN)
                 val byPrefix = lines
                     .map { it.text.trim() }
                     .filter { it.length > a0.length && it.startsWith(p4) && isAddressLike(it) }
@@ -241,14 +272,14 @@ object AddressExtractor {
             val nearbyBest = lines
                 .filter { tl ->
                     val y = tl.boundingBox?.let { it.top.toFloat() } ?: 0f
-                    y > labY && y - labY < 300f && tl.text.trim().length > a0.length
+                    y > labY && y - labY < LABEL_NEARBY_Y_GAP && tl.text.trim().length > a0.length
                 }
                 .map { it.text.trim() }
-                .filter { it.length >= 4 && isAddressLike(it) }
+                .filter { it.length >= MIN_ADDRESS_CORE_LEN && isAddressLike(it) }
                 .maxByOrNull { it.length }
             if (nearbyBest != null) a = nearbyBest
             if (isAddressLike(a)) {
-                st.fullAddress = a.take(80)
+                st.fullAddress = a.take(MAX_ADDRESS_LEN)
                 st.addrFrom = "S0b-addrLabel"
                 if (st.stationName.isEmpty()) st.stationName = extractStationName(a)
             }
@@ -269,7 +300,7 @@ object AddressExtractor {
             val valueLine = lines.firstOrNull { v ->
                 val vb = v.boundingBox ?: return@firstOrNull false
                 vb !== labBox &&
-                    kotlin.math.abs(vb.centerY() - labBox.centerY()) < 60 &&
+                    kotlin.math.abs(vb.centerY() - labBox.centerY()) < COLUMN_BAND_Y_TOL &&
                     vb.left > labBox.right
             } ?: continue
             // 拼接值行 + 下方同列（地址续行）
@@ -279,8 +310,8 @@ object AddressExtractor {
             var curY = valueBox.bottom
             for (contLine in lines) {
                 val cb = contLine.boundingBox ?: continue
-                if (cb.centerY() > curY && cb.centerY() - curY < 120 &&
-                    kotlin.math.abs(cb.left - valueBox.left) < 40) {
+                if (cb.centerY() > curY && cb.centerY() - curY < COLUMN_CONTINUE_Y_GAP &&
+                    kotlin.math.abs(cb.left - valueBox.left) < COLUMN_SAME_X_TOL) {
                     sb.append(contLine.text.trim())
                     curY = cb.bottom
                 }
@@ -288,11 +319,11 @@ object AddressExtractor {
             val contTxt = sb.toString()
             // 若续行已包含取值行的核心地址（前4字），直接用更完整的续行，避免重复拼接
             // （例：取值行=育新路北段店，续行=育新路育新路育新路北段爱玛电动车旁边 → 只用续行）
-            val core = if (valueTxt.length >= 4) valueTxt.substring(0, 4) else valueTxt
-            val usesValue = valueTxt.length < 4 || !contTxt.contains(core)
+            val core = if (valueTxt.length >= MIN_ADDRESS_CORE_LEN) valueTxt.substring(0, MIN_ADDRESS_CORE_LEN) else valueTxt
+            val usesValue = valueTxt.length < MIN_ADDRESS_CORE_LEN || !contTxt.contains(core)
             val a = cleanAddress(if (usesValue) (valueTxt + contTxt) else contTxt)
             if (st.fullAddress.isEmpty() && a.isNotEmpty() && isAddressLike(a)) {
-                st.fullAddress = a.take(80)
+                st.fullAddress = a.take(MAX_ADDRESS_LEN)
                 st.addrFrom = "S0c-column"
                 if (st.stationName.isEmpty()) st.stationName = extractStationName(a)
             }
@@ -320,7 +351,7 @@ object AddressExtractor {
                     for (j in lines.indexOf(line) + 1 until minOf(lines.indexOf(line) + 4, lines.size)) {
                         val n = lines[j]
                         val nBox = n.boundingBox
-                        if (nBox != null && cursorY != null && nBox.top - cursorY > 600) break
+                        if (nBox != null && cursorY != null && nBox.top - cursorY > ADDR_LINE_GAP_MAX) break
                         val nt = n.text.trim()
                         if (nt.isEmpty()) continue
                         if (nt.length < 2 || nt.first().isDigit() || nt.startsWith("|") ||
@@ -330,7 +361,7 @@ object AddressExtractor {
                     }
                     val joinedAddr = parts.joinToString("")
                     val finalAddr = if (isAddressLike(joinedAddr) && joinedAddr.length > right.length) joinedAddr else right
-                    st.fullAddress = stripBrackets(finalAddr).take(80); st.addrFrom = "S2-pipe"
+                    st.fullAddress = stripBrackets(finalAddr).take(MAX_ADDRESS_LEN); st.addrFrom = "S2-pipe"
                 }
             }
         }
@@ -343,7 +374,7 @@ object AddressExtractor {
     if (st.fullAddress.isEmpty()) {
         ADDR_PLACED.find(allText)?.let { m ->
             val a = m.groupValues[1].trim()
-            if (isAddressLike(a)) { st.fullAddress = stripBrackets(a).take(80); st.addrFrom = "S5-placed" }
+            if (isAddressLike(a)) { st.fullAddress = stripBrackets(a).take(MAX_ADDRESS_LEN); st.addrFrom = "S5-placed" }
         }
     }
     }
@@ -365,7 +396,7 @@ object AddressExtractor {
                 val a = m6.groupValues[1].trim()
                 val clean = a.replace(PING_NOISE_TRAIL, "").trim()
                 if (isAddressLike(clean)) {
-                    st.fullAddress = stripBrackets(clean).take(80)
+                    st.fullAddress = stripBrackets(clean).take(MAX_ADDRESS_LEN)
                     st.addrFrom = "S6a"
                     if (st.stationName.isEmpty()) st.stationName = extractStationName(clean)
                     return@let
@@ -375,7 +406,7 @@ object AddressExtractor {
 
             // S6b: 跨行匹配——OCR 常把「到<地址>」和「取运单…」拆成多个 TextLine，
             // 拼接前 1~3 行（结束词「取您/取件」可能在 3 行外）
-            for (span in 1..3) {
+            for (span in 1..CARD_LINE_WINDOW) {
                 if (i - span < 0) break
                 val start = i - span
                 val combined = (start until i).joinToString(" ") { lines[it].text } + " " + line.text
@@ -383,7 +414,7 @@ object AddressExtractor {
                     val a = m6.groupValues[1].trim()
                     val clean = a.replace(PING_NOISE_TRAIL, "").trim()
                     if (isAddressLike(clean)) {
-                        st.fullAddress = stripBrackets(clean).take(80)
+                        st.fullAddress = stripBrackets(clean).take(MAX_ADDRESS_LEN)
                         st.addrFrom = "S6b"
                         if (st.stationName.isEmpty()) st.stationName = extractStationName(clean)
                         return@let
@@ -412,10 +443,10 @@ object AddressExtractor {
                 up.append(u)
             }
             val cand = (up.toString() + s7addr)
-            if (isAddressLike(cand)) s7addr = cand.take(80)
+            if (isAddressLike(cand)) s7addr = cand.take(MAX_ADDRESS_LEN)
         }
         if (st.fullAddress.isEmpty() && isAddressLike(s7addr))
-            { st.fullAddress = stripBrackets(s7addr).take(80); st.addrFrom = "S7-cabinet" }
+            { st.fullAddress = stripBrackets(s7addr).take(MAX_ADDRESS_LEN); st.addrFrom = "S7-cabinet" }
     }
     }
 
@@ -431,10 +462,10 @@ object AddressExtractor {
             val n = lines[j].text.trim()
             if (!isAddressLike(n)) continue
             // 命中后向下拼 1~2 行地址续行（跳过单字/数字/噪声行）
-            var s8addr = stripBrackets(n).take(80)
-            if (s8addr.length < 80) {
+            var s8addr = stripBrackets(n).take(MAX_ADDRESS_LEN)
+            if (s8addr.length < MAX_ADDRESS_LEN) {
                 val contParts = mutableListOf(s8addr)
-                for (k in j + 1 until minOf(j + 3, lines.size)) {
+                for (k in j + 1 until minOf(j + CARD_LINE_WINDOW, lines.size)) {
                     val c = lines[k].text.trim()
                     if (c.isEmpty()) break
                     if (c.length < 2 || c.first().isDigit() || c.startsWith("|") ||
@@ -442,7 +473,7 @@ object AddressExtractor {
                     contParts.add(c)
                 }
                 val joined = contParts.joinToString("")
-                if (isAddressLike(joined)) s8addr = joined.take(80)
+                if (isAddressLike(joined)) s8addr = joined.take(MAX_ADDRESS_LEN)
             }
             st.fullAddress = s8addr; st.addrFrom = "S8-nearby"; break
         }
@@ -456,7 +487,7 @@ object AddressExtractor {
         for (line in lines) {
             val m = PAREN_ADDR.find(line.text)
             if (m != null && isAddressLike(m.groupValues[1])) {
-                st.fullAddress = stripBrackets(m.groupValues[1]).take(80); st.addrFrom = "S9-paren"; break
+                st.fullAddress = stripBrackets(m.groupValues[1]).take(MAX_ADDRESS_LEN); st.addrFrom = "S9-paren"; break
             }
         }
     }
@@ -472,14 +503,14 @@ object AddressExtractor {
             if (!line.text.contains(ADDR_PIPE_FULL) || !isAddressLike(line.text.trim())) continue
             // 向下续行拼接：OCR 常把地址拆成相邻多行（如 申通快/谦/申通快递）
             var addrBase = stripBrackets(line.text.trim())
-            if (addrBase.length < 80) {
+            if (addrBase.length < MAX_ADDRESS_LEN) {
                 var cursorY = line.boundingBox?.bottom
                 val parts = mutableListOf(addrBase)
                 for (j in idx + 1 until minOf(idx + 4, lines.size)) {
                     val n = lines[j]
                     val nBox = n.boundingBox
                     // 纵 gap 过大（>600px）说明不是同一地址块，停止
-                    if (nBox != null && cursorY != null && nBox.top - cursorY > 600) break
+                    if (nBox != null && cursorY != null && nBox.top - cursorY > ADDR_LINE_GAP_MAX) break
                     val nt = n.text.trim()
                     if (nt.isEmpty()) continue
                     // 过滤单字错字（OCR 拆出的笔画字，如 谦）与非地址噪声行
@@ -490,7 +521,7 @@ object AddressExtractor {
                     cursorY = nBox?.bottom ?: cursorY
                 }
                 val joined = parts.joinToString("")
-                if (isAddressLike(joined)) { addrBase = joined.take(80) } else { addrBase = parts.first() }
+                if (isAddressLike(joined)) { addrBase = joined.take(MAX_ADDRESS_LEN) } else { addrBase = parts.first() }
             }
             st.fullAddress = addrBase; st.addrFrom = "S10-fallback"; break
         }
@@ -515,12 +546,12 @@ object AddressExtractor {
             st.stationName = lockerName
         }
         if (st.fullAddress.isNotEmpty() && !st.fullAddress.contains(lockerName)) {
-            st.fullAddress = (st.fullAddress + lockerName).take(80)
+            st.fullAddress = (st.fullAddress + lockerName).take(MAX_ADDRESS_LEN)
         }
         // 追加柜号（如 2号柜）：地址若没有“X号柜”则补上
         if (st.cabinet != null && st.cabinet!!.isNotEmpty() &&
             !Regex("\\d+号柜").containsMatchIn(st.fullAddress)) {
-            st.fullAddress = (st.fullAddress + st.cabinet + "号柜").take(80)
+            st.fullAddress = (st.fullAddress + st.cabinet + "号柜").take(MAX_ADDRESS_LEN)
         }
     }
     }
@@ -566,11 +597,11 @@ object AddressExtractor {
 
         fun inWindow(otherIdx: Int): Boolean {
             if (otherIdx == codeIdx) return false
-            if (kotlin.math.abs(otherIdx - codeIdx) > 3) return false
+            if (kotlin.math.abs(otherIdx - codeIdx) > CARD_LINE_WINDOW) return false
             val b = lines[otherIdx].boundingBox ?: return true
             val cIdxBox = lines[codeIdx].boundingBox
             if (cIdxBox != null && codeBoxTop != null) {
-                return kotlin.math.abs(b.top.toFloat() - codeBoxTop) <= 400f
+                return kotlin.math.abs(b.top.toFloat() - codeBoxTop) <= CARD_WINDOW_Y_GAP
             }
             return true
         }
@@ -585,23 +616,23 @@ object AddressExtractor {
         // 优先级 1：S6 「到…取件/取用」句式（通知体最常见的地址锚点）
         // 地址可能跨行（LINE8“…到育新路与季庄街…社区卫生” + LINE9“所对面2号柜H36…取您的快递”）
         // 仅在本码 ±3 行的窗口内找；含「到」即尝试（同码头尾地址常在码行，无需同行的取件词）
-        val lo = (codeIdx - 3).coerceAtLeast(0)
-        val hi = (codeIdx + 3).coerceAtMost(lines.lastIndex)
+        val lo = (codeIdx - CARD_LINE_WINDOW).coerceAtLeast(0)
+        val hi = (codeIdx + CARD_LINE_WINDOW).coerceAtMost(lines.lastIndex)
         for (i in lo..hi) {
             val t = lines[i].text
             if (!t.contains("到")) continue
             // 单行先试（排除"到达/已到达"动词：捕获以"达"开头说明是"到达xx"误抽，非地址介词"到"）
             ADDR_AFTER_TO.find(t)?.let { m6 ->
                 val clean0 = m6.groupValues[1].trim().replace(PING_NOISE_TRAIL, "").trim()
-                if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(80)
+                if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(MAX_ADDRESS_LEN)
             }
             // 跨行向下拼接 1~3 行
-            for (span in 1..3) {
+            for (span in 1..CARD_LINE_WINDOW) {
                 if (i + span >= lines.size) break
                 val combined = (i..i + span).joinToString("") { lines[it].text }
                 ADDR_AFTER_TO.find(combined)?.let { m6b ->
                     val clean0 = m6b.groupValues[1].trim().replace(PING_NOISE_TRAIL, "").trim()
-                    if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(80)
+                    if (!clean0.startsWith("达") && isAddressLike(clean0)) return stripBrackets(clean0).take(MAX_ADDRESS_LEN)
                 }
             }
         }
@@ -611,26 +642,26 @@ object AddressExtractor {
         val labLine = windowLines.firstOrNull { it.text.contains(REG_ADDR_LABEL_MARK) }
         if (labLine != null) {
             val a0 = cleanAddress(ADDR_LABEL.find(labLine.text)?.groupValues?.get(1).orEmpty())
-            if (isAddressLike(a0) && a0.length >= 4) {
+            if (isAddressLike(a0) && a0.length >= MIN_ADDRESS_CORE_LEN) {
                 // 前缀命中同行更完整行 或 同前缀更长行
-                val p4 = a0.substring(0, 4)
+                val p4 = a0.substring(0, MIN_ADDRESS_CORE_LEN)
                 val byPrefix = windowLines.map { it.text.trim() }
                     .filter { it.length > a0.length && it.startsWith(p4) && isAddressLike(it) }
                     .maxByOrNull { it.length }
-                if (byPrefix != null) return byPrefix.take(80)
+                if (byPrefix != null) return byPrefix.take(MAX_ADDRESS_LEN)
             }
             // 标签值退化/短时：取标签行下方邻近的干净完整地址（同一通知卡片区域）
             val labY = labLine.boundingBox?.let { it.top.toFloat() } ?: 0f
             val nearby = windowLines
                 .filter { tl ->
                     val y = tl.boundingBox?.let { it.top.toFloat() } ?: 0f
-                    y > labY && y - labY < 300f && tl.text.trim().length > a0.length
+                    y > labY && y - labY < LABEL_NEARBY_Y_GAP && tl.text.trim().length > a0.length
                 }
                 .map { it.text.trim() }
-                .filter { it.length >= 4 && isAddressLike(it) }
+                .filter { it.length >= MIN_ADDRESS_CORE_LEN && isAddressLike(it) }
                 .maxByOrNull { it.length }
-            if (nearby != null) return nearby.take(80)
-            if (isAddressLike(a0)) return a0.take(80)
+            if (nearby != null) return nearby.take(MAX_ADDRESS_LEN)
+            if (isAddressLike(a0)) return a0.take(MAX_ADDRESS_LEN)
         }
 
         // 优先级 3：窗口内最长的像地址行
@@ -638,7 +669,7 @@ object AddressExtractor {
             .map { it.text.trim() }
             .filter { isAddressLike(it) }
             .maxByOrNull { it.length }
-        return best?.take(80) ?: ""
+        return best?.take(MAX_ADDRESS_LEN) ?: ""
     }
 
     /** Backward-compatible: return address string from structured location. */
@@ -748,7 +779,7 @@ object AddressExtractor {
 
     private fun isAddressLike(s: String): Boolean {
         val t = stripBrackets(s)
-        if (t.length !in 4..80 || t.none { it in '\u4e00'..'\u9fff' }) return false
+        if (t.length !in MIN_ADDRESS_CORE_LEN..MAX_ADDRESS_LEN || t.none { it in '\u4e00'..'\u9fff' }) return false
         // Must contain address indicators (road/street/building/cabinet etc)
         // 「元」会与货币/金额冲突（如 累计省4元>、¥9.9元、实付¥8.90）——只有 单元/几单元 里的 元 才算地址指示符
         val pipeChars = ADDR_PIPE_FULL.findAll(t).map { it.value }.toList()
