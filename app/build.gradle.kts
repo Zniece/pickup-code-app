@@ -26,8 +26,8 @@ android {
         applicationId = "com.pickupcode.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 22
-        versionName = "1.0.7"
+        versionCode = 23
+        versionName = "1.0.8"
     }
 
     signingConfigs {

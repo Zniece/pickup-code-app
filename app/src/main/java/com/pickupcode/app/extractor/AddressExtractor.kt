@@ -17,7 +17,7 @@ object AddressExtractor {
 
     // 地址指示符（isAddressLike 核心判断）：合并反编译 App sources extractAddress 的 30+ 地标词表，
     // 覆盖 店/铺/站/点/园/苑/广场/中心/公寓/写字楼 等常见地址结尾，减少 S10 兜底漏抓真实地址。
-    // 注意保留“元”仅在“单元”语境（见 isAddressLike 的 bareYuanOnly 处理）。
+    // 注意保留"元"仅在"单元"语境（见 isAddressLike 的 bareYuanOnly 处理）。
     private val ADDR_PIPE_FULL = Regex("[路街巷弄号栋幢单元柜室楼区县镇乡村庄店铺站点园苑院屋所广场中心商厦厦居宅房寓庭墅阁舍江河港湾门口岸桥山岭岗场]")
     private val ADDR_LANDMARK = Regex("(菜鸟|驿站|快递柜|丰巢|超市|诊所|对面|门口|小区|大厦|医院|银行|学校|商场|广场|中心|公寓|写字楼|工业园|科技园|物流园|产业园|代收点|便利店|商行|门面|花园|家园|宿舍|中学|孵化园)")
     private val ADDR_AFTER_TO = Regex("到(.+?)(领取|取件|门店|取运单尾号|取运单|取您|取你的|取貨|取货|取走|取你)")
@@ -124,7 +124,7 @@ object AddressExtractor {
     /** S-Coupon: 券码/到店券门店识别（最高优先级；内部含券码上下文守卫）。 */
     private fun stepCoupon(lines: List<OCREngine.TextLine>, allText: String, st: LocationState) {
     // S-Coupon: 券码/到店券的门店识别（最高优先级）
-    // 场景：外卖/到店券（德克士、蜜雪冰城等）截图，用户要的是“适用门店”（如 蜜雪冰城(老十字街店)），
+    // 场景：外卖/到店券（德克士、蜜雪冰城等）截图，用户要的是"适用门店"（如 蜜雪冰城(老十字街店)），
     // 而非配送地址/周边地址。信号：待使用/用券/到店取/适用门店/立即用券/到店使用/券号 等券码上下文。
     val couponContext = listOf(
         "券号", "用券", "到店取", "到店使用", "待使用", "适用门店", "立即用券",
@@ -132,8 +132,8 @@ object AddressExtractor {
     )
     val isCouponContext = couponContext.any { allText.contains(it) }
     if (isCouponContext && st.fullAddress.isEmpty()) {
-        // 优先扫描逐行，找“品牌名(店名)”格式（蜜雪冰城(老十字街店) / 德克士(郸械万果园店)）
-        // 注意：括号字符类易触发 ICU 正则“incorrectly nested parentheses”，
+        // 优先扫描逐行，找"品牌名(店名)"格式（蜜雪冰城(老十字街店) / 德克士(郸械万果园店)）
+        // 注意：括号字符类易触发 ICU 正则"incorrectly nested parentheses"，
         // 故不用单条大正则，改用简单匹配 + 字符串定位，稳妥且兼容。
         var couponAddr = ""
         var couponStation = ""
@@ -154,14 +154,14 @@ object AddressExtractor {
             if (closeIdx <= 0) continue
             val brandPart = t.substring(0, openIdx).trim()
             val paren = afterOpen.substring(0, closeIdx).trim()
-            // 品牌前导需为 2~10 个汉字；括号名需以“店”结尾且不含数字（排除快递员电话括号）
+            // 品牌前导需为 2~10 个汉字；括号名需以"店"结尾且不含数字（排除快递员电话括号）
             if (!brandPart.matches(REG_CJK_BRAND_LEAD)) continue
             if (!paren.endsWith("店") || paren.any { it.isDigit() }) continue
             // 完整门店串 = t 中从行首到闭括号的整段（基于原始行重建，避免 trimmed paren 导致丢字）
             val full = t.substring(0, openIdx) + t[openIdx] + afterOpen.substring(0, closeIdx + 1)
             // 行内门店信号：命中（已通过品牌前导校验的前提下）再认。
-            // 注意：品牌前导校验已足够窄，此处要求额外的“到店/适用门店/营业中”这类券码信号，
-            // 以提高精确度——避免把正文里任意 “X(某店)” 当门店（PRD：只认券码截图的门店）。
+            // 注意：品牌前导校验已足够窄，此处要求额外的"到店/适用门店/营业中"这类券码信号，
+            // 以提高精确度——避免把正文里任意 "X(某店)" 当门店（PRD：只认券码截图的门店）。
             val brandHits = BrandResolver.FOOD_BRAND_KEYWORDS.any { brandPart.contains(it, ignoreCase = true) }
             val storeSig =
                 t.contains("营业中") || t.contains("适用门店") || t.contains("到店") ||
@@ -184,12 +184,12 @@ object AddressExtractor {
     private fun stepBracketBrand(allText: String, st: LocationState) {
     // S1: 【】 bracket brand for station name
     // 优先取含站点/快递关键词的括号；跳过快递员姓名+电话的括号（如【刘趁义:19037835253】）
-    // 注意：不设“取第一个括号”的兜底——否则快递员括号会误当站名，留空交给后面的分支补全
+    // 注意：不设"取第一个括号"的兜底——否则快递员括号会误当站名，留空交给后面的分支补全
     val bracketMatches = BrandResolver.BRACKET_BRAND.findAll(allText).map { it.groupValues[1].trim() }.toList()
     val goodBracket = bracketMatches.firstOrNull { content ->
         // 跳过包含手机号/运单号等数字的括号
         if (content.any { it.isDigit() }) return@firstOrNull false
-        // 跳过优惠/福利/券类营销横幅（如【新店福利】是“新店优惠”标签，不是店名/站名）
+        // 跳过优惠/福利/券类营销横幅（如【新店福利】是"新店优惠"标签，不是店名/站名）
         if (PROMO_LABEL_WORDS.any { content.contains(it) }) return@firstOrNull false
         STATION_TYPE_MAP.keys.any { content.contains(it) } ||
             ADDR_PIPE_FULL.containsMatchIn(content) ||
@@ -225,16 +225,19 @@ object AddressExtractor {
                 val combined = cleanAddress(a + cont.toString())
                 if (isAddressLike(combined)) a = combined
             }
-            // 折叠地址补全：S0-label 抓到的地址若只到省市区层级（缺路/街/号/店等街道/网点特征），
-            // 折叠地址补全：S0-label 抓到的地址可能是被 UI 折叠的短串（如“…育新北展开”或“【xx店:..”），
+            // 折叠地址补全：S0-label 抓到的地址可能是被 UI 折叠的短串（如"…育新北展开"或"【xx店:.."），
             // 而同屏另有更具体的完整街道地址行（快递正文，如 育新路北段爱玛电动车旁边）。
-            // 判断标准：存在比 a 更长、像地址、无折叠残留(未闭合括号/省略号/展开) 且含明确街道特征的行 → 就用它替换。
+            // 判断标准：标签行所在卡片窗口（±CARD_LINE_WINDOW 行）内，存在比 a 更长、像地址、
+            // 无折叠残留(未闭合括号/省略号/展开) 且含明确街道特征的行 → 就用它替换。
+            // 限定窗口：避免多通知同屏时串台到其他通知的地址。
             val streetLike = listOf("路", "街", "巷", "弄", "道", "号店", "小区", "苑", "大厦", "超市", "驿站", "快柜", "智柜", "村", "庄")
             val adminLike = listOf("省", "市", "县", "区")
             // 折叠残留检测：a 以未闭合括号开头（如 【xx店，右括号被截断），或含 …/.. 省略号痕迹
             val uncleanA = a.startsWith("【") || a.startsWith("（") || a.startsWith("(") ||
                 a.contains("..") || a.contains("…")
-            val better = lines
+            val winLo = (lineIdx - CARD_LINE_WINDOW).coerceAtLeast(0)
+            val winHi = (lineIdx + CARD_LINE_WINDOW).coerceAtMost(lines.lastIndex)
+            val better = lines.slice(winLo..winHi)
                 .map { it.text.trim() }
                 .filter {
                     it.length in 6..60 &&
@@ -549,7 +552,7 @@ object AddressExtractor {
         .sortedByDescending { it.length }
         .firstOrNull { allText.contains(it) }
     if (lockerName != null) {
-        // 劣质站名替换：动作前缀（已放入/待取件…）或“含数字的商品/规格名”（如 4.5英寸昧碟）都不是站名 → 换成柜名
+        // 劣质站名替换：动作前缀（已放入/待取件…）或"含数字的商品/规格名"（如 4.5英寸昧碟）都不是站名 → 换成柜名
         val stationLooksBad = listOf("已放入", "已放至", "已暂存", "待取件", "待取", "已派送").any { st.stationName.startsWith(it) } ||
             (st.stationName.any { it.isDigit() } &&
                 STATION_TYPE_MAP.keys.none { st.stationName.contains(it) } &&
@@ -560,7 +563,7 @@ object AddressExtractor {
         if (st.fullAddress.isNotEmpty() && !st.fullAddress.contains(lockerName)) {
             st.fullAddress = (st.fullAddress + lockerName).take(MAX_ADDRESS_LEN)
         }
-        // 追加柜号（如 2号柜）：地址若没有“X号柜”则补上
+        // 追加柜号（如 2号柜）：地址若没有"X号柜"则补上
         if (st.cabinet?.isNotEmpty() == true &&
             !ANY_CABINET_NUM.containsMatchIn(st.fullAddress)) {
             st.fullAddress = (st.fullAddress + st.cabinet + "号柜").take(MAX_ADDRESS_LEN)
@@ -626,7 +629,7 @@ object AddressExtractor {
         val windowText = windowLines.joinToString(" ") { it.text }
 
         // 优先级 1：S6 「到…取件/取用」句式（通知体最常见的地址锚点）
-        // 地址可能跨行（LINE8“…到育新路与季庄街…社区卫生” + LINE9“所对面2号柜H36…取您的快递”）
+        // 地址可能跨行（LINE8"…到育新路与季庄街…社区卫生" + LINE9"所对面2号柜H36…取您的快递"）
         // 仅在本码 ±3 行的窗口内找；含「到」即尝试（同码头尾地址常在码行，无需同行的取件词）
         val lo = (codeIdx - CARD_LINE_WINDOW).coerceAtLeast(0)
         val hi = (codeIdx + CARD_LINE_WINDOW).coerceAtMost(lines.lastIndex)
@@ -705,7 +708,7 @@ object AddressExtractor {
 
     /**
      * 独立柜号提取（借鉴反编译 App extractCabinetInfo）：从取件文本里抓柜号/格口，
-     * 如 2号柜、5号副柜、云柜12号、12号格口、A区3号柜。返回规范化串（含“柜/格口”后缀），
+     * 如 2号柜、5号副柜、云柜12号、12号格口、A区3号柜。返回规范化串（含"柜/格口"后缀），
      * 无则空串。供入库时作为独立 cabinetNumber 字段保存（区别于拼进地址尾部）。
      */
     fun extractCabinetNumber(lines: List<OCREngine.TextLine>, allText: String): String {
@@ -775,7 +778,7 @@ object AddressExtractor {
                 r = r.substring(1, r.length - 1).trim()
             } else break
         }
-        // 处理不闭合的左括号（OCR/UI 折叠截断导致如 “【育新路北段店” 无右括号）：剥掉孤立左括号
+        // 处理不闭合的左括号（OCR/UI 折叠截断导致如 "【育新路北段店" 无右括号）：剥掉孤立左括号
         if (r.startsWith("【") && !r.contains("】")) r = r.removePrefix("【").trim()
         if (r.startsWith("（") && !r.contains("）")) r = r.removePrefix("（").trim()
         if (r.startsWith("(") && !r.contains(")")) r = r.removePrefix("(").trim()

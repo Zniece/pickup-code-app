@@ -258,7 +258,8 @@ object CodeExtractor {
             val learned = com.pickupcode.app.learner.PatternLearner.getLearnedPatterns(context)
             for (rule in learned) {
                 // A1: 用户手动停用的规则不再参与识别
-                if (!rule.enabled) continue
+                // A1: 用户手动停用 → 跳过；badCount ≥ 3 → 自动停用
+                if (!rule.enabled || rule.badCount >= 3) continue
                 try {
                     val regex = Regex(rule.regex)
                     val type = if (rule.type == "pickup_food") CodeType.pickup_food else CodeType.pickup_parcel

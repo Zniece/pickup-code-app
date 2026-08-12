@@ -114,29 +114,32 @@ interface CodeHistoryDao {
      * 由「重复值整理」入口手动保留/删除。existed=是否已存在同 code+type（用于提示重复），
      * 但每次都会 insert 新行（不再像 saveOrUpdate 那样合并成一行）。
      *
-     * 增强（借鉴 sources2 deduplicatePackages）：查重的同码记录若缺地址/柜号/来源，
-     * 用本次新识别到的信息补全缺失项——同一取件码多张截图/多次识别，地址和柜号可能
-     * 只在其中一张上识别完整，补全后详情页无需再空着。
+     * v1.0.9: 补全逻辑修复 —— 旧行补全后不再插入空新行，而是用合并后的行更新时间戳复用。
+     * 此前在旧行补完后仍 insert 一条新行，但活跃列表取 MAX(id)，用户看到的是那条地址/截图
+     * 为空的新行，而非被补全的旧行。
      */
     @Transaction
     suspend fun insertCheckDuplicate(history: CodeHistory): SaveResult {
         val existing = findByCodeAndType(history.code, history.type)
         if (existing != null) {
-            // 补全缺失信息（仅当新值非空且旧值为空时覆盖）
-            val needUpdate =
-                (history.pickupAddress.isNotBlank() && existing.pickupAddress.isBlank()) ||
-                (history.cabinetNumber.isNotBlank() && existing.cabinetNumber.isBlank()) ||
-                (history.source.isNotBlank() && existing.source.isBlank())
-            if (needUpdate) {
-                update(existing.copy(
-                    pickupAddress = if (history.pickupAddress.isNotBlank()) history.pickupAddress else existing.pickupAddress,
-                    cabinetNumber = if (history.cabinetNumber.isNotBlank()) history.cabinetNumber else existing.cabinetNumber,
-                    source = if (history.source.isNotBlank()) history.source else existing.source
-                ))
-            }
+            // 将新记录的字段合并进旧行（新值优先，空值保留旧值）
+            val merged = existing.copy(
+                pickupAddress = if (history.pickupAddress.isNotBlank()) history.pickupAddress else existing.pickupAddress,
+                cabinetNumber = if (history.cabinetNumber.isNotBlank()) history.cabinetNumber else existing.cabinetNumber,
+                source = if (history.source.isNotBlank()) history.source else existing.source,
+                screenshotPath = if (history.screenshotPath.isNotBlank()) history.screenshotPath else existing.screenshotPath,
+                rawTextSnippet = if (history.rawTextSnippet.isNotBlank()) history.rawTextSnippet else existing.rawTextSnippet,
+                shareSourcePkg = if (history.shareSourcePkg.isNotBlank()) history.shareSourcePkg else existing.shareSourcePkg,
+                shareSourceName = if (history.shareSourceName.isNotBlank()) history.shareSourceName else existing.shareSourceName,
+                isActive = true,
+                doneAt = 0,
+                timestamp = history.timestamp
+            )
+            update(merged)
+            return SaveResult(existing.id, true)
         }
         val id = insert(history)
-        return SaveResult(id, existing != null)
+        return SaveResult(id, false)
     }
 }
 

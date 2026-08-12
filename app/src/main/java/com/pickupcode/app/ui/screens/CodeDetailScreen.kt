@@ -119,6 +119,8 @@ fun CodeDetailScreen(
                             // A3: 该码值加入可学习排除，之后识别不再把它当取件码。
                             // 注意：不把误报文本喂入学习池(unmatched_samples)——否则会学生出与"排除"矛盾的新规则。
                             PatternLearner.addExclude(ctx, item.code)
+                            // 回喂已学规则：给匹配到该码的规则加 badCount，累积 ≥3 自动停用
+                            PatternLearner.markLearnedRuleBad(ctx, item.code)
                         }
                     }
                 )

@@ -589,7 +589,8 @@ private val verifiedAddrLock = Any()
         val confidence: Float = 0.5f,
         val sampleCount: Int = 0,
         val lastUsedAt: Long = 0L,
-        val decayed: Boolean = false   // B3: 长期未命中自动降级为「可选」而非强制应用
+        val decayed: Boolean = false,  // B3: 长期未命中自动降级为「可选」而非强制应用
+        val badCount: Int = 0          // 用户标记不正确的次数，≥3 时自动停用
     )
 
     private const val KEY_LEARNED = "learned_rules"
@@ -645,6 +646,7 @@ private val verifiedAddrLock = Any()
                 // Low-3: 保持原有 lastUsedAt（为 0 则写 0），不要把从未使用过的旧规则写成 now
                 put("lastUsedAt", r.lastUsedAt)
                 put("decayed", decayed)
+                put("badCount", r.badCount)
             })
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -714,9 +716,29 @@ private val verifiedAddrLock = Any()
                     confidence = obj.optDouble("confidence", 0.5).toFloat(),
                     sampleCount = obj.optInt("sampleCount", 0),
                     lastUsedAt = obj.optLong("lastUsedAt", 0L),
-                    decayed = obj.optBoolean("decayed", false)
+                    decayed = obj.optBoolean("decayed", false),
+                    badCount = obj.optInt("badCount", 0)
                 )
             }
         } catch (_: Exception) { emptyList() }
+    }
+
+    /** 用户标记某个码值不正确时，给匹配到该码的已学规则加一次 badCount。
+     *  badCount ≥ 3 的规则会在下次加载时被 CodeExtractor 跳过（自动停用）。 */
+    fun markLearnedRuleBad(context: Context, code: String) {
+        if (code.isBlank()) return
+        val rules = getLearnedPatterns(context)
+        var changed = false
+        val updated = rules.map { r ->
+            if (r.enabled && r.badCount < 3) {
+                try {
+                    if (Regex(r.regex).matches(code)) {
+                        changed = true
+                        r.copy(badCount = r.badCount + 1)
+                    } else r
+                } catch (_: Exception) { r }
+            } else r
+        }
+        if (changed) saveLearnedPatterns(context, updated)
     }
 }
