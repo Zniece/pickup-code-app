@@ -75,6 +75,11 @@ android {
         jvmTarget = "17"
     }
 
+    testOptions {
+        unitTests.all { it.useJUnitPlatform() }
+        unitTests.isReturnDefaultValues = true
+    }
+
     buildFeatures {
         compose = true
         buildConfig = true
@@ -115,4 +120,8 @@ dependencies {
 
     // Core KTX
     implementation("androidx.core:core-ktx:1.15.0")
+
+    // Tests (JUnit 5 — 纯 Kotlin 单元测试，无 Android 依赖)
+    testImplementation("org.junit.jupiter:junit-jupiter:5.10.2")
+    testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:5.10.2")
 }
