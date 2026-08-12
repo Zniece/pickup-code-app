@@ -6,11 +6,8 @@ import android.content.Intent
 import android.telephony.SmsMessage
 import android.util.Log
 import com.pickupcode.app.data.AppDatabase
-import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AddressExtractor
 import com.pickupcode.app.extractor.CodeExtractor
-import com.pickupcode.app.learner.CommonStationStore
-import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.CoroutineScope

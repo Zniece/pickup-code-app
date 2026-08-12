@@ -17,7 +17,6 @@ import com.pickupcode.app.extractor.BrandResolver
 import com.pickupcode.app.extractor.CouponDetector
 import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
-import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
 import com.pickupcode.app.service.RecognitionPipeline
