@@ -98,37 +98,21 @@ class SmsReceiver : BroadcastReceiver() {
                     val db = AppDatabase.getInstance(context)
                     val repo = db.repository
 
-                    for (result in allResults) {
-                        val perCodeAddr = AddressExtractor.extractAddressForCode(lines, result.code)
-                        val cabinet = if (result.type == CodeExtractor.CodeType.pickup_parcel)
-                            AddressExtractor.extractCabinetNumber(lines, allText) else ""
-                        val effAddr = perCodeAddr.ifBlank { fullAddress }
-
-                        // 短信路径用 saveOrUpdate：同 code+type 更新而非新增（短信来源稳定，避免刷屏重复）
-                        val save = repo.save(CodeHistory(
-                            code = result.code,
-                            type = result.type.name,
-                            source = result.source,
-                            rawTextSnippet = rawSnippet,
-                            pickupAddress = effAddr,
-                            cabinetNumber = cabinet,
-                            timestamp = now
-                        ))
-
-                        // 常用站点学习
-                        if (result.type == CodeExtractor.CodeType.pickup_parcel && effAddr.isNotBlank()) {
-                            CommonStationStore.recordCode(context, effAddr, body)
-                        }
-
-                        if (save.existed) {
-                            val dupCount = repo.countDuplicateGroups()
-                            CodeNotificationManager.showDuplicate(
-                                context, result.code, result.type, result.source, save.id, dupCount
-                            )
-                        } else {
-                            CodeNotificationManager.show(context, result.code, result.type, result.source, save.id)
-                        }
-                        Log.d(TAG, "短信识别入库: ${result.code} (${result.type.name}) @ $effAddr")
+                    val saved = RecognitionPipeline.finalize(
+                        context = context,
+                        allResults = allResults.map { it.code to it.type },
+                        codeSources = allResults.associate { it.code to it.source },
+                        lines = lines,
+                        allText = allText,
+                        fullAddress = fullAddress,
+                        rawSnippet = rawSnippet,
+                        timestamp = now,
+                        repo = repo
+                    )
+                    for (s in saved) {
+                        RecognitionPipeline.notifySaved(context, { repo.countDuplicateGroups() },
+                            s.code, s.type, s.source, s.id, s.existed)
+                        RecognitionPipeline.logSaved(TAG, s.code, s.type, s.source, fullAddress, s.existed)
                     }
                 }
             } catch (e: Exception) {

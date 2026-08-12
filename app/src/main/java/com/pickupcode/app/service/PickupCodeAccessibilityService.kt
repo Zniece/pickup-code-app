@@ -270,9 +270,26 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             path
         } ?: ""
 
-        // ⑥ 去重/冲突检测/每码地址 + 落库（同码同类型去重；同码不同类型保留但通知用户）
-        val conflicts = persistResults(ocrLines, allText, address, screenshotPath, allResults, codeSources)
+        // ⑥ 冲突检测（无障碍特有：同码不同类型提示用户确认）
+        val conflicts = detectConflicts(allResults)
         notifyConflicts(conflicts, silent)
+
+        // 逐码落库 + 站点学习（三路径共用管线）
+        val saved = RecognitionPipeline.finalize(
+            context = this@PickupCodeAccessibilityService,
+            allResults = allResults,
+            codeSources = codeSources,
+            lines = ocrLines,
+            allText = allText,
+            fullAddress = address,
+            rawSnippet = allText,
+            screenshotPath = screenshotPath,
+            repo = AppDatabase.getInstance(this@PickupCodeAccessibilityService).repository
+        )
+        // 通知：冲突提示已由 notifyConflicts 统一处理，此处不区分 existed
+        for (s in saved) {
+            CodeNotificationManager.show(this@PickupCodeAccessibilityService, s.code, s.type, s.source, s.id)
+        }
 
         // ⑦ 快递100 验证：识别到取件码时，用运单号反查取件码/地址作为标准答案，对照 OCR 结果（fire-and-forget）
         verifyWithKuaidi100(settings, allText, address, allResults)
@@ -387,32 +404,19 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         return true
     }
 
-    /** ⑥ 去重 + 冲突检测 + 每码地址 + 落库（saveCode 内部自启协程）。返回冲突码列表。 */
-    private fun persistResults(ocrLines: List<OCREngine.TextLine>, allText: String, address: String, screenshotPath: String,
-                               allResults: List<Pair<String, CodeExtractor.CodeType>>,
-                               codeSources: Map<String, String>): List<String> {
+    /** ⑥ 冲突检测：同码同时匹配取餐/取件类型时返回该码（提示用户确认）。 */
+    private fun detectConflicts(allResults: List<Pair<String, CodeExtractor.CodeType>>): List<String> {
         val seen = mutableSetOf<String>()
         val conflicts = mutableListOf<String>()
         for ((code, type) in allResults) {
             val key = "$code|$type"
             if (key in seen) continue
             seen.add(key)
-
-            // 检查是否有冲突（同码不同type）
             val otherType = if (type == CodeExtractor.CodeType.pickup_food)
                 CodeExtractor.CodeType.pickup_parcel else CodeExtractor.CodeType.pickup_food
             if ("$code|$otherType" in seen || allResults.any { it.first == code && it.second == otherType }) {
                 conflicts.add(code)
             }
-
-            // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
-            val perCodeAddr = AddressExtractor.extractAddressForCode(ocrLines, code)
-            // 独立柜号（借鉴反编译 App extractCabinetInfo），入库时作为独立 cabinetNumber 字段
-            val perCabinet = if (type == CodeExtractor.CodeType.pickup_parcel)
-                AddressExtractor.extractCabinetNumber(ocrLines, allText) else ""
-            // raw 应存 OCR 全文（误报反馈/详情页展示依赖），不能用触发标签（source）
-            saveCode(code, type, codeSources[code] ?: "unknown", screenshotPath, allText,
-                perCodeAddr.ifBlank { address }, perCabinet)
         }
         return conflicts
     }
@@ -463,33 +467,6 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
     }
 
-    private fun saveCode(code: String, type: CodeExtractor.CodeType, source: String, screenshotPath: String, raw: String, address: String = "", cabinet: String = "") {
-        scope.launch {
-            val db = AppDatabase.getInstance(this@PickupCodeAccessibilityService)
-            val repo = db.repository
-
-            val save = repo.save(CodeHistory(
-                code = code, type = type.name,
-                source = source,
-                screenshotPath = screenshotPath,
-                rawTextSnippet = raw,
-                pickupAddress = address,
-                cabinetNumber = cabinet,
-                timestamp = System.currentTimeMillis()
-            ))
-            val id = save.id
-
-            // 常用站点学习：保存带地址的取件记录时，累计该站点出现频次，供后续地址识别优先匹配
-            if (type == CodeExtractor.CodeType.pickup_parcel && address.isNotBlank()) {
-                com.pickupcode.app.learner.CommonStationStore.recordCode(
-                    this@PickupCodeAccessibilityService, address, raw
-                )
-            }
-
-            // 冲突提示统一在 persistResults → notifyConflicts 中处理，此处不重复发
-            CodeNotificationManager.show(this@PickupCodeAccessibilityService, code, type, source, id)
-        }
-    }
 
     private fun saveScreenshot(bmp: Bitmap, timestamp: Long): String {
         try {

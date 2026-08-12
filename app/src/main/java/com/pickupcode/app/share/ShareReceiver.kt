@@ -20,6 +20,7 @@ import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
 import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
+import com.pickupcode.app.service.RecognitionPipeline
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -393,49 +394,32 @@ object ShareReceiver {
             return
         }
 
+        // 逐码落库 + 站点学习（三路径共用管线）
+        val saved = RecognitionPipeline.finalize(
+            context = context,
+            allResults = allResults.map { it.code to it.type },
+            codeSources = allResults.associate { it.code to it.source },
+            lines = lines,
+            allText = allText,
+            fullAddress = address,
+            rawSnippet = rawSnippet,
+            screenshotPath = screenshotPath,
+            shareSourcePkg = shareSourcePkg,
+            shareSourceName = shareSourceName,
+            repo = db.repository
+        )
+        // 通知（同码同 type 已存在 → 重复提示；否则正常通知）
+        for (s in saved) {
+            RecognitionPipeline.notifySaved(context, { db.repository.countDuplicateGroups() },
+                s.code, s.type, s.source, s.id, s.existed)
+            RecognitionPipeline.logSaved(TAG, s.code, s.type, s.source, address, s.existed)
+        }
         // Low-3: 记录本次保存的 code → id，供快递100回填定向更新，避免命中历史最新行
-        val savedIdsByCode = mutableMapOf<String, Long>()
-        for (result in allResults) {
-            // 多驿站：每个码取自己通知卡片区域的地址；取不到再回退全屏地址
-            val perCodeAddr = AddressExtractor.extractAddressForCode(lines, result.code)
-            val effAddr = perCodeAddr.ifBlank { address }
-            // 独立柜号（借鉴反编译 App extractCabinetInfo），入库时作为独立 cabinetNumber 字段
-            val cabinet = if (result.type == CodeExtractor.CodeType.pickup_parcel)
-                AddressExtractor.extractCabinetNumber(lines, allText) else ""
-            // 原始去重语义：查重后照常新增，让同一码多次保存产生多行，进「重复值整理」手动整理
-            val save = db.repository.save(CodeHistory(
-                code = result.code,
-                type = result.type.name,
-                source = result.source,
-                rawTextSnippet = rawSnippet,
-                pickupAddress = effAddr,
-                cabinetNumber = cabinet,
-                screenshotPath = screenshotPath,
-                shareSourcePkg = shareSourcePkg,
-                shareSourceName = shareSourceName,
-                timestamp = System.currentTimeMillis()
-            ))
-            val id = save.id
-            savedIdsByCode[result.code] = id
+        val savedIdsByCode = saved.associate { it.code to it.id }
 
-            // 常用站点学习：保存带地址的取件记录时累计站点频次，供后续地址识别优先匹配
-            if (result.type == CodeExtractor.CodeType.pickup_parcel && effAddr.isNotBlank()) {
-                com.pickupcode.app.learner.CommonStationStore.recordCode(context, effAddr, rawSnippet)
-            }
-
-            // Notify user (同码同type已存在 -> 提示重复；否则正常通知)
-            if (save.existed) {
-                val dupCount = db.codeHistoryDao().countDuplicateGroups()
-                CodeNotificationManager.showDuplicate(
-                    context, result.code, result.type, result.source, id, dupCount
-                )
-            } else {
-                CodeNotificationManager.show(context, result.code, result.type, result.source, id)
-            }
-            Log.d(TAG, "Recognized: ${result.code} (${result.type.name}) from ${result.source}${if (save.existed) " [DUPLICATE]" else ""}")
-
-            // Async address geocoding verification
-            if (address.isNotBlank() && settings.enableMapVerify) {
+        // Async address geocoding verification（每个码）
+        if (address.isNotBlank() && settings.enableMapVerify) {
+            for (s in saved) {
                 scope.launch(Dispatchers.IO) {
                     try {
                         val geoResult = GeocoderVerifier.verify(
@@ -444,8 +428,8 @@ object ShareReceiver {
                         )
                         if (geoResult.verified) {
                             // M1: 定向更新 geo 字段，不动 code/address 等其他字段，避免覆盖用户编辑
-                            db.codeHistoryDao().findByCodeAndType(result.code, result.type.name)?.let { rec ->
-                                db.codeHistoryDao().updateGeo(
+                            db.repository.findByCodeAndType(s.code, s.type.name)?.let { rec ->
+                                db.repository.updateGeo(
                                     rec.id, true,
                                     geoResult.confidence,
                                     geoResult.formattedAddress ?: ""

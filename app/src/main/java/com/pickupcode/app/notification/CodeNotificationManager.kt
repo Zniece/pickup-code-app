@@ -8,7 +8,6 @@ import android.content.Context
 import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import com.pickupcode.app.MainActivity
 import com.pickupcode.app.extractor.CodeExtractor
 
 object CodeNotificationManager {
@@ -74,13 +73,7 @@ object CodeNotificationManager {
         val iconLabel = style.iconLabel
         val title = style.title
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context, 0, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pendingIntent = launchPendingIntent(context)
 
         val nid = nextNotifyId()
         val notification = NotificationCompat.Builder(context, channelId)
@@ -165,11 +158,7 @@ object CodeNotificationManager {
         }
         try {
             val style = typeStyle(type)
-            val pendingIntent = PendingIntent.getActivity(
-                context, 0,
-                Intent(context, MainActivity::class.java).apply { flags = Intent.FLAG_ACTIVITY_NEW_TASK },
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
+            val pendingIntent = launchPendingIntent(context)
             val notification = NotificationCompat.Builder(context, style.channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
                 .setContentTitle("⏰ 稍后提醒：${style.title} $code")
@@ -182,6 +171,18 @@ object CodeNotificationManager {
             // 用独立 ID 空间，避免覆盖同码原始通知
             manager.notify((safeId(type, code) and 0x7fffffff) or 0x40000000, notification)
         } catch (e: Exception) { Log.w("CodeNotification", "提醒通知构建失败", e) }
+    }
+
+    /** 通知点击跳转：通过 launch intent 打开主界面（不直接引用 Activity 类，避免 notification→ui 环依赖）。 */
+    private fun launchPendingIntent(context: Context, requestCode: Int = 0, extra: Pair<String, Boolean>? = null): PendingIntent {
+        val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)
+            ?: Intent(Intent.ACTION_MAIN).apply { addCategory(Intent.CATEGORY_LAUNCHER); setPackage(context.packageName) }
+        launch.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        if (extra != null) launch.putExtra(extra.first, extra.second)
+        return PendingIntent.getActivity(
+            context, requestCode, launch,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
     }
 
     /** 取消已设置的稍后提醒闹钟（用户提前取件时调用）。 */
@@ -207,14 +208,7 @@ object CodeNotificationManager {
         val channelId = style.channelId
         val iconLabel = style.iconLabel
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("show_dedup", true)
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context, safeId(type, code), intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
+        val pendingIntent = launchPendingIntent(context, requestCode = safeId(type, code), extra = "show_dedup" to true)
 
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
