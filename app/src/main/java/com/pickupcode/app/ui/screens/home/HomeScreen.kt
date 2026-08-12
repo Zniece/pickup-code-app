@@ -90,11 +90,12 @@ fun HomeScreen(
 ) {
     val context = LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
-    val activeHistory by remember { db.codeHistoryDao().getActiveFlow() }.collectAsState(initial = emptyList())
-    val trashHistory by remember { db.codeHistoryDao().getTrashFlow() }.collectAsState(initial = emptyList())
+    val vm = remember { HomeViewModel(db.repository) }
+    val activeHistory by vm.activeHistory.collectAsState()
+    val trashHistory by vm.trashHistory.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
-    var dedupCount by remember { mutableIntStateOf(0) }
+    val dedupCount by vm::dedupCount
     var typeFilter by remember { mutableStateOf("all") }
     var guideExpanded by remember { mutableStateOf(false) }
 
@@ -127,52 +128,30 @@ fun HomeScreen(
     }
             val groupOrder = listOf("今天", "昨天", "更早").filter { it in grouped }
 
+            LaunchedEffect(Unit) { vm.cleanExpired(db.repository) }
+
             // 共享操作：标记已取/删除 → 移入回收站 → snackbar 撤销
             fun markAsDone(item: CodeHistory) {
-                scope.launch(Dispatchers.IO) {
-                    try {
-                        db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
-                        val result = withContext(Dispatchers.Main) {
-                            snackbarHostState.showSnackbar(
+                vm.markAsDone(item, db.repository,
+                    onSuccess = {
+                        scope.launch {
+                            val result = snackbarHostState.showSnackbar(
                                 message = "已移至回收站，24小时后自动删除",
                                 actionLabel = "撤销",
                                 duration = SnackbarDuration.Short
                             )
+                            if (result == SnackbarResult.ActionPerformed) {
+                                vm.undoDone(item, trashHistory, db.repository)
+                            }
                         }
-                        if (result == SnackbarResult.ActionPerformed) {
-                            trashHistory.filter { it.code == item.code && it.type == item.type }
-                                .forEach { db.codeHistoryDao().restore(it.id) }
-                        }
-                    } catch (e: Exception) {
-                        Log.e("HomeScreen", "标记已取失败", e)
-                        withContext(Dispatchers.Main) {
-                            snackbarHostState.showSnackbar("操作失败，请重试", duration = SnackbarDuration.Short)
-                        }
+                    },
+                    onError = { msg ->
+                        scope.launch { snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Short) }
                     }
-                }
+                )
             }
 
-    LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            try {
-                val oneDayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000
-                val dao = db.codeHistoryDao()
-                dao.getExpiredScreenshots(oneDayAgo).forEach { path ->
-                    try { java.io.File(path).delete() } catch (e: Exception) { Log.w("HomeScreen", "截图清理失败: $path", e) }
-                }
-                dao.deleteExpiredTrash(oneDayAgo)
-            } catch (e: Exception) {
-                Log.e("HomeScreen", "回收站清理失败", e)
-            }
-        }
-    }
-
-    // Medium-3: 重复分组计数只随 activeHistory 变化查询，避免与上面的 LaunchedEffect(Unit) 重复查询
-    LaunchedEffect(activeHistory) {
-        withContext(Dispatchers.IO) {
-            dedupCount = db.codeHistoryDao().countDuplicateGroups()
-        }
-    }
+    LaunchedEffect(activeHistory) { vm.refreshDedupCount(db.repository) }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
