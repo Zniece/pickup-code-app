@@ -148,7 +148,12 @@ fun HomeScreen(
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val oneDayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000
-            db.codeHistoryDao().deleteExpiredTrash(oneDayAgo)
+            val dao = db.codeHistoryDao()
+            // 先清截图文件再删 DB 行
+            dao.getExpiredScreenshots(oneDayAgo).forEach { path ->
+                try { java.io.File(path).delete() } catch (_: Exception) {}
+            }
+            dao.deleteExpiredTrash(oneDayAgo)
         }
     }
 

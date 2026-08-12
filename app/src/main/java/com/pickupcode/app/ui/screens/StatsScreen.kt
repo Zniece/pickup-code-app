@@ -76,8 +76,9 @@ fun StatsScreen(onBack: () -> Unit) {
                     // C4: 成绩卡分享（生成图片海报）
                     if (stats != null) {
                         IconButton(onClick = {
+                            val s = stats ?: return@IconButton
                             scope.launch(Dispatchers.IO) {
-                                com.pickupcode.app.share.ShareStatsCard.share(context, stats!!)
+                                com.pickupcode.app.share.ShareStatsCard.share(context, s)
                             }
                         }) {
                             Icon(Icons.Default.Share, "分享成绩卡")

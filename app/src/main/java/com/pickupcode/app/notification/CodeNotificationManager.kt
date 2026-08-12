@@ -183,6 +183,16 @@ object CodeNotificationManager {
         } catch (_: Exception) { }
     }
 
+    /** 取消已设置的稍后提醒闹钟（用户提前取件时调用）。 */
+    fun cancelRemind(context: Context, code: String, type: CodeExtractor.CodeType) {
+        val alarm = context.getSystemService(AlarmManager::class.java) ?: return
+        val intent = Intent(context, RemindReceiver::class.java)
+        val pi = PendingIntent.getBroadcast(context, safeId(type, code) and 0x7fffffff, intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        alarm.cancel(pi)
+        pi.cancel()
+    }
+
     /** Show notification for a duplicate code — informs user there are now ≥2 records for this code. */
     fun showDuplicate(context: Context, code: String, type: CodeExtractor.CodeType, source: String, historyId: Long, dupGroupCount: Int) {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&

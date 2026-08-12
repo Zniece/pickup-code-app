@@ -93,7 +93,7 @@ object AIExtractor {
                 .getJSONObject("message")
                 .getString("content")
                 .trim()
-                .replace("```json", "")
+                .replace(Regex("```[a-zA-Z]*\\s*"), "")
                 .replace("```", "")
                 .trim()
 

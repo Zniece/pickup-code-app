@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.pickupcode.app.data.AppDatabase
+import com.pickupcode.app.extractor.CodeExtractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,6 +29,11 @@ class DoneReceiver : BroadcastReceiver() {
                     val rec = dao.getByIdSuspend(historyId)
                     if (rec != null) {
                         dao.markDoneByCodeAndType(rec.code, rec.type)
+                        // 取消该码的稍后提醒（用户提前取了，不再需要闹钟）
+                        CodeNotificationManager.cancelRemind(
+                            context, rec.code,
+                            try { CodeExtractor.CodeType.valueOf(rec.type) } catch (_: Exception) { CodeExtractor.CodeType.pickup_parcel }
+                        )
                     } else {
                         dao.markDone(historyId)
                     }

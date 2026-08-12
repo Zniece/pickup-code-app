@@ -44,6 +44,10 @@ interface CodeHistoryDao {
     @Query("UPDATE code_history SET geoVerified = :verified, geoConfidence = :confidence, geoFormattedAddress = :formatted WHERE id = :id")
     suspend fun updateGeo(id: Long, verified: Boolean, confidence: Float, formatted: String)
 
+    /** 定向更新 pickupAddress（Kuaidi100 回填，避免整行 update 覆盖中间用户操作）。 */
+    @Query("UPDATE code_history SET pickupAddress = :address WHERE id = :id")
+    suspend fun updatePickupAddress(id: Long, address: String)
+
     /** 批量归档：同 code+type 的所有活跃记录标记为已取（一次取件对应多份同码记录全部归档）。 */
     @Query("UPDATE code_history SET isActive = 0, doneAt = :doneAt WHERE code = :code AND type = :type AND isActive = 1")
     suspend fun markDoneByCodeAndType(code: String, type: String, doneAt: Long = System.currentTimeMillis())
@@ -55,6 +59,10 @@ interface CodeHistoryDao {
     /** 清除过期回收站记录（超过 retentionMs） */
     @Query("DELETE FROM code_history WHERE isActive = 0 AND doneAt > 0 AND doneAt < :before")
     suspend fun deleteExpiredTrash(before: Long)
+
+    /** 取过期回收站记录的截图路径（用于在删除 DB 行前先清理截图文件）。 */
+    @Query("SELECT screenshotPath FROM code_history WHERE isActive = 0 AND doneAt > 0 AND doneAt < :before AND screenshotPath != ''")
+    suspend fun getExpiredScreenshots(before: Long): List<String>
 
     /** 手动删除回收站记录 */
     @Query("DELETE FROM code_history WHERE id = :id")

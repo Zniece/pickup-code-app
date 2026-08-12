@@ -441,12 +441,12 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                         } else {
                             Log.d(TAG, "Kuaidi100 mismatch: OCR=${ocrCodes}, API=${res.pickUpCode}")
                         }
-                        // 若 OCR 未识别出地址，且 API 返回了标准地址，补全到该取件码记录
+                        // 若 OCR 未识别出地址，且 API 返回了标准地址，定向补全（不覆盖中间用户操作）
                         if (address.isBlank() && !res.pickUpAddress.isNullOrBlank()) {
                             val dao = AppDatabase.getInstance(this@PickupCodeAccessibilityService).codeHistoryDao()
                             val rec = dao.findByCodeAndType(res.pickUpCode, CodeExtractor.CodeType.pickup_parcel.name)
                             if (rec != null && rec.pickupAddress.isBlank()) {
-                                dao.update(rec.copy(pickupAddress = res.pickUpAddress))
+                                dao.updatePickupAddress(rec.id, res.pickUpAddress)
                             }
                         }
                     }
@@ -487,17 +487,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                 )
             }
 
-            // 检测同 code 不同类型的重复值
-            val otherType = if (type == CodeExtractor.CodeType.pickup_food)
-                CodeExtractor.CodeType.pickup_parcel else CodeExtractor.CodeType.pickup_food
-            val duplicates = dao.findSameCodeDifferentType(code, type.name)
-
-            if (duplicates.isNotEmpty()) {
-                val typeLabel = if (type == CodeExtractor.CodeType.pickup_food) "取餐" else "取件"
-                val otherLabel = if (otherType == CodeExtractor.CodeType.pickup_food) "取餐" else "取件"
-                showResult("⚠️ 「$code」同时出现在${otherLabel}和${typeLabel}中，请进入App确认")
-            }
-
+            // 冲突提示统一在 persistResults → notifyConflicts 中处理，此处不重复发
             CodeNotificationManager.show(this@PickupCodeAccessibilityService, code, type, source, id)
         }
     }
