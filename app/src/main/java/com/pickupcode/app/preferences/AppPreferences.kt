@@ -1,6 +1,7 @@
 package com.pickupcode.app.preferences
 
 import android.content.Context
+import android.util.Log
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -268,7 +269,8 @@ object AppPreferences {
                 GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
             )
             String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.w(TAG, "AES-GCM 解密失败，API Key 需重新输入", e)
             ""
         }
     }

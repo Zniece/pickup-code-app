@@ -51,7 +51,8 @@ class SmsReceiver : BroadcastReceiver() {
         if (body.isEmpty()) return
         // 去掉发送者的前后重复标题（如 【菜鸟驿站】...【菜鸟驿站】），仅保留正文主体
         val sender = messages.firstOrNull()?.originatingAddress ?: ""
-        val rawSnippet = "[短信] $sender | $body"
+        val displaySender = if (sender.length > 4) "***${sender.takeLast(4)}" else sender
+        val rawSnippet = "[短信] $displaySender | $body"
 
         // 节流：同内容 30s 内不重复处理
         val now = System.currentTimeMillis()

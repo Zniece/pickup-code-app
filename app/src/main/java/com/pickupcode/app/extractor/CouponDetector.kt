@@ -59,7 +59,7 @@ object CouponDetector {
         try {
             mutex.withLock {
                 val image = InputImage.fromBitmap(bitmap, 0)
-                val barcodes = getScanner().process(image).await()
+                val barcodes = kotlinx.coroutines.withTimeout(10_000L) { getScanner().process(image).await() }
                 barcodes
                     .filter { !it.rawValue.isNullOrBlank() }
                     .map { CouponResult(rawValue = it.rawValue) }

@@ -189,7 +189,7 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
                         .padding(vertical = 2.dp)) } }
             item {
                 var upStatus by remember { mutableStateOf<String?>(null) }; var checking by remember { mutableStateOf(false) }
-                OutlinedButton(onClick = { checking = true; scope.launch { upStatus = checkUpdate(); checking = false } }, enabled = !checking,
+                OutlinedButton(onClick = { checking = true; scope.launch { val result = checkUpdate(); upStatus = result; if (result.startsWith("检查失败")) android.widget.Toast.makeText(ctx, result, android.widget.Toast.LENGTH_SHORT).show(); checking = false } }, enabled = !checking,
                     border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface),
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onSurface)) {
                     Text(if (checking) "检查中..." else "检查更新") }

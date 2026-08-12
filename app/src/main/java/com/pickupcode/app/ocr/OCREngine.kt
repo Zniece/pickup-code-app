@@ -55,7 +55,7 @@ object OCREngine {
         try {
             val image = InputImage.fromBitmap(bitmap, 0)
             val task = getRecognizer().process(image)
-            val result = task.await()
+            val result = kotlinx.coroutines.withTimeout(30_000L) { task.await() }
             val out = mutableListOf<TextLine>()
             for (block in result.textBlocks) {
                 for (line in block.lines) {

@@ -415,6 +415,7 @@ private fun launchNavigation(context: android.content.Context, address: String) 
         context.startActivity(intent)
     } catch (e: Exception) {
         Log.w("CodeDetail", "唤起导航失败: ${e.message}")
+        android.widget.Toast.makeText(context, "无法打开导航应用", android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 

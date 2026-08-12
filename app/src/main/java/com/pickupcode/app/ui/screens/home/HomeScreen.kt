@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import android.util.Log
 import androidx.compose.ui.unit.sp
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
@@ -129,31 +130,40 @@ fun HomeScreen(
             // 共享操作：标记已取/删除 → 移入回收站 → snackbar 撤销
             fun markAsDone(item: CodeHistory) {
                 scope.launch(Dispatchers.IO) {
-                    db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
-                    val result = withContext(Dispatchers.Main) {
-                        snackbarHostState.showSnackbar(
-                            message = "已移至回收站，24小时后自动删除",
-                            actionLabel = "撤销",
-                            duration = SnackbarDuration.Short
-                        )
-                    }
-                    if (result == SnackbarResult.ActionPerformed) {
-                        // H10: 撤销与归档范围一致——恢复同 code+type 的全部记录（markDoneByCodeAndType 归档的是同 code+type 全部）
-                        trashHistory.filter { it.code == item.code && it.type == item.type }
-                            .forEach { db.codeHistoryDao().restore(it.id) }
+                    try {
+                        db.codeHistoryDao().markDoneByCodeAndType(item.code, item.type)
+                        val result = withContext(Dispatchers.Main) {
+                            snackbarHostState.showSnackbar(
+                                message = "已移至回收站，24小时后自动删除",
+                                actionLabel = "撤销",
+                                duration = SnackbarDuration.Short
+                            )
+                        }
+                        if (result == SnackbarResult.ActionPerformed) {
+                            trashHistory.filter { it.code == item.code && it.type == item.type }
+                                .forEach { db.codeHistoryDao().restore(it.id) }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("HomeScreen", "标记已取失败", e)
+                        withContext(Dispatchers.Main) {
+                            snackbarHostState.showSnackbar("操作失败，请重试", duration = SnackbarDuration.Short)
+                        }
                     }
                 }
             }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
-            val oneDayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000
-            val dao = db.codeHistoryDao()
-            // 先清截图文件再删 DB 行
-            dao.getExpiredScreenshots(oneDayAgo).forEach { path ->
-                try { java.io.File(path).delete() } catch (_: Exception) {}
+            try {
+                val oneDayAgo = System.currentTimeMillis() - 24 * 60 * 60 * 1000
+                val dao = db.codeHistoryDao()
+                dao.getExpiredScreenshots(oneDayAgo).forEach { path ->
+                    try { java.io.File(path).delete() } catch (e: Exception) { Log.w("HomeScreen", "截图清理失败: $path", e) }
+                }
+                dao.deleteExpiredTrash(oneDayAgo)
+            } catch (e: Exception) {
+                Log.e("HomeScreen", "回收站清理失败", e)
             }
-            dao.deleteExpiredTrash(oneDayAgo)
         }
     }
 

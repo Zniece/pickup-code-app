@@ -497,6 +497,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             // H4: 存 cacheDir（系统可自动清理），避免 filesDir 无限累积
             val dir = File(cacheDir, "screenshots")
             dir.mkdirs()
+            File(dir, ".nomedia").createNewFile()
             val file = File(dir, "screenshot_$timestamp.jpg")
             FileOutputStream(file).use { out ->
                 bmp.compress(Bitmap.CompressFormat.JPEG, 85, out)

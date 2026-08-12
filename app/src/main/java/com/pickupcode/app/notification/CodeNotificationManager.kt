@@ -6,6 +6,7 @@ import android.app.PendingIntent
 import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.pickupcode.app.MainActivity
 import com.pickupcode.app.extractor.CodeExtractor
@@ -92,7 +93,7 @@ object CodeNotificationManager {
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .addAction(0, "已取",
                 PendingIntent.getBroadcast(context, (nid + 1) and 0x7fffffff,
                     Intent(context, DoneReceiver::class.java).apply {
@@ -180,7 +181,7 @@ object CodeNotificationManager {
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
             // 用独立 ID 空间，避免覆盖同码原始通知
             manager.notify((safeId(type, code) and 0x7fffffff) or 0x40000000, notification)
-        } catch (_: Exception) { }
+        } catch (e: Exception) { Log.w("CodeNotification", "提醒通知构建失败", e) }
     }
 
     /** 取消已设置的稍后提醒闹钟（用户提前取件时调用）。 */

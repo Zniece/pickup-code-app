@@ -309,8 +309,10 @@ object ShareReceiver {
                 if (!bitmap.isRecycled) bitmap.recycle()
             }
         }
-        // 无 OCR 文本且无券码 → 无内容
-        if (lines.isEmpty() && coupons.isEmpty()) return
+        if (lines.isEmpty() && coupons.isEmpty()) {
+            Log.w(TAG, "分享图片识别无结果——OCR和条码检测均未返回内容")
+            return
+        }
         val allText = lines.joinToString(" ") { it.text }
         val address = AddressExtractor.extractAddress(lines, allText)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"

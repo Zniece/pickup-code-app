@@ -48,7 +48,9 @@ object AIExtractor {
     ): AIExtractResult = withContext(Dispatchers.IO) {
         var conn: HttpURLConnection? = null
         try {
-            val url = URL("${apiBaseUrl.trimEnd('/')}/chat/completions")
+            val parsed = java.net.URI.create(apiBaseUrl).toURL()
+            require(parsed.protocol == "https") { "API Base URL must use HTTPS" }
+            val url = URL("${parsed.toString().trimEnd('/')}/chat/completions")
             conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
             conn.setRequestProperty("Content-Type", "application/json")

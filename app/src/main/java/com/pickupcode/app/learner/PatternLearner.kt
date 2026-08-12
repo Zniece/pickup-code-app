@@ -1,6 +1,7 @@
 package com.pickupcode.app.learner
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -90,7 +91,7 @@ object PatternLearner {
                         val o = arr.getJSONObject(i)
                         map[o.optString("date")] = o
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) { Log.w("PatternLearner", "日统计数据JSON损坏，已重置", e) }
             }
             val today = map[key] ?: JSONObject().apply { put("date", key); put("total", 0); put("hits", 0); put("misses", 0) }
             today.put("total", today.optInt("total") + 1)
@@ -146,7 +147,7 @@ object PatternLearner {
                     val o = arr.getJSONObject(i)
                     map[o.optString("address")] = PickupPoint(o.optString("name"), o.optInt("count"), o.optLong("last", 0L))
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { Log.w("PatternLearner", "常用取件点JSON损坏，已重置", e) }
         }
         val prev = map[key]
         map[key] = PickupPoint(key, (prev?.count ?: 0) + 1, System.currentTimeMillis())
@@ -725,6 +726,7 @@ private val verifiedAddrLock = Any()
 
     /** 用户标记某个码值不正确时，给匹配到该码的已学规则加一次 badCount。
      *  badCount ≥ 3 的规则会在下次加载时被 CodeExtractor 跳过（自动停用）。 */
+    @Synchronized
     fun markLearnedRuleBad(context: Context, code: String) {
         if (code.isBlank()) return
         val rules = getLearnedPatterns(context)

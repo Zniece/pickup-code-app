@@ -2,6 +2,7 @@ package com.pickupcode.app
 
 import android.os.Build
 import android.content.Intent
+import android.util.Log
 import android.os.Bundle
 import android.provider.Settings
 import android.widget.Toast
@@ -192,10 +193,12 @@ class MainActivity : ComponentActivity() {
                 },
                 onMarkDone = { id ->
                     lifecycleScope.launch(Dispatchers.IO) {
-                        // Batch delete all duplicates
-                        item?.let { db.codeHistoryDao().markDoneByCodeAndType(it.code, it.type) }
-                    }
-                    onBack()
+                        try {
+                            item?.let { db.codeHistoryDao().markDoneByCodeAndType(it.code, it.type) }
+                        } catch (e: Exception) {
+                            Log.e("MainActivity", "标记已取失败", e)
+                        }
+                    }.invokeOnCompletion { onBack() }
                 }
             )
         } ?: Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
