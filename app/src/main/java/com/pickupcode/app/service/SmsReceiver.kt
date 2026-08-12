@@ -84,52 +84,51 @@ class SmsReceiver : BroadcastReceiver() {
 
                     val allText = lines.joinToString(" ") { it.text }
                     val results = CodeExtractor.extract(lines, context = context, source = "sms")
-                    val parcel = results.firstOrNull { it.type == CodeExtractor.CodeType.pickup_parcel }
-                    val food = results.firstOrNull { it.type == CodeExtractor.CodeType.pickup_food }
-
-                    // 只认取件/取餐码；忽略券码
-                    val candidate = when {
-                        parcel != null -> parcel
-                        food != null -> food
-                        else -> null
+                    val allResults = results.filter {
+                        it.confidence >= settings.confidenceThreshold
                     }
-                    if (candidate == null) {
+                    if (allResults.isEmpty()) {
                         Log.d(TAG, "短信无取件码，跳过")
                         return@withTimeoutOrNull
                     }
 
-                    val address = if (candidate.type == CodeExtractor.CodeType.pickup_parcel)
-                        AddressExtractor.extractAddress(lines, allText, context) else ""
-                    val cabinet = if (candidate.type == CodeExtractor.CodeType.pickup_parcel)
-                        AddressExtractor.extractCabinetNumber(lines, allText) else ""
-
+                    // 全屏地址（兜底用，各码优先取自己窗口内的地址）
+                    val fullAddress = AddressExtractor.extractAddress(lines, allText, context)
                     val db = AppDatabase.getInstance(context)
                     val dao = db.codeHistoryDao()
-                    // 短信路径用 saveOrUpdate：同 code+type 更新而非新增（短信来源稳定，避免刷屏重复）
-                    val save = dao.saveOrUpdate(CodeHistory(
-                        code = candidate.code,
-                        type = candidate.type.name,
-                        source = candidate.source,
-                        rawTextSnippet = rawSnippet,
-                        pickupAddress = address,
-                        cabinetNumber = cabinet,
-                        timestamp = now
-                    ))
 
-                    // 常用站点学习
-                    if (candidate.type == CodeExtractor.CodeType.pickup_parcel && address.isNotBlank()) {
-                        CommonStationStore.recordCode(context, address, body)
-                    }
+                    for (result in allResults) {
+                        val perCodeAddr = AddressExtractor.extractAddressForCode(lines, result.code)
+                        val cabinet = if (result.type == CodeExtractor.CodeType.pickup_parcel)
+                            AddressExtractor.extractCabinetNumber(lines, allText) else ""
+                        val effAddr = perCodeAddr.ifBlank { fullAddress }
 
-                    if (save.existed) {
-                        val dupCount = dao.countDuplicateGroups()
-                        CodeNotificationManager.showDuplicate(
-                            context, candidate.code, candidate.type, candidate.source, save.id, dupCount
-                        )
-                    } else {
-                        CodeNotificationManager.show(context, candidate.code, candidate.type, candidate.source, save.id)
+                        // 短信路径用 saveOrUpdate：同 code+type 更新而非新增（短信来源稳定，避免刷屏重复）
+                        val save = dao.saveOrUpdate(CodeHistory(
+                            code = result.code,
+                            type = result.type.name,
+                            source = result.source,
+                            rawTextSnippet = rawSnippet,
+                            pickupAddress = effAddr,
+                            cabinetNumber = cabinet,
+                            timestamp = now
+                        ))
+
+                        // 常用站点学习
+                        if (result.type == CodeExtractor.CodeType.pickup_parcel && effAddr.isNotBlank()) {
+                            CommonStationStore.recordCode(context, effAddr, body)
+                        }
+
+                        if (save.existed) {
+                            val dupCount = dao.countDuplicateGroups()
+                            CodeNotificationManager.showDuplicate(
+                                context, result.code, result.type, result.source, save.id, dupCount
+                            )
+                        } else {
+                            CodeNotificationManager.show(context, result.code, result.type, result.source, save.id)
+                        }
+                        Log.d(TAG, "短信识别入库: ${result.code} (${result.type.name}) @ $effAddr")
                     }
-                    Log.d(TAG, "短信识别入库: ${candidate.code} (${candidate.type.name}) @ $address")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "短信识别失败: ${e.message}", e)
