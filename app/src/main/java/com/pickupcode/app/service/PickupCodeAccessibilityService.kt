@@ -466,10 +466,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     private fun saveCode(code: String, type: CodeExtractor.CodeType, source: String, screenshotPath: String, raw: String, address: String = "", cabinet: String = "") {
         scope.launch {
             val db = AppDatabase.getInstance(this@PickupCodeAccessibilityService)
-            val dao = db.codeHistoryDao()
+            val repo = db.repository
 
-            // 原始去重语义：找重后照常新增，让同一码多次保存产生多行，进「重复值整理」手动整理
-            val save = dao.insertCheckDuplicate(CodeHistory(
+            val save = repo.save(CodeHistory(
                 code = code, type = type.name,
                 source = source,
                 screenshotPath = screenshotPath,

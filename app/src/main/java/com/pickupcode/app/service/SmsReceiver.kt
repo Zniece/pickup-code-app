@@ -96,7 +96,7 @@ class SmsReceiver : BroadcastReceiver() {
                     // 全屏地址（兜底用，各码优先取自己窗口内的地址）
                     val fullAddress = AddressExtractor.extractAddress(lines, allText, context)
                     val db = AppDatabase.getInstance(context)
-                    val dao = db.codeHistoryDao()
+                    val repo = db.repository
 
                     for (result in allResults) {
                         val perCodeAddr = AddressExtractor.extractAddressForCode(lines, result.code)
@@ -105,7 +105,7 @@ class SmsReceiver : BroadcastReceiver() {
                         val effAddr = perCodeAddr.ifBlank { fullAddress }
 
                         // 短信路径用 saveOrUpdate：同 code+type 更新而非新增（短信来源稳定，避免刷屏重复）
-                        val save = dao.saveOrUpdate(CodeHistory(
+                        val save = repo.save(CodeHistory(
                             code = result.code,
                             type = result.type.name,
                             source = result.source,
@@ -121,7 +121,7 @@ class SmsReceiver : BroadcastReceiver() {
                         }
 
                         if (save.existed) {
-                            val dupCount = dao.countDuplicateGroups()
+                            val dupCount = repo.countDuplicateGroups()
                             CodeNotificationManager.showDuplicate(
                                 context, result.code, result.type, result.source, save.id, dupCount
                             )

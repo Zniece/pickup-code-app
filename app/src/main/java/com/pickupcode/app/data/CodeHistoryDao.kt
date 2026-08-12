@@ -154,6 +154,7 @@ interface CodeHistoryDao {
 @Database(entities = [CodeHistory::class], version = 5, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun codeHistoryDao(): CodeHistoryDao
+    val repository: CodeRepository by lazy { CodeRepository(codeHistoryDao()) }
 
     companion object {
         /** 1 → 2：初始表结构调整（基础 code_history 表字段补全）。 */

@@ -403,7 +403,7 @@ object ShareReceiver {
             val cabinet = if (result.type == CodeExtractor.CodeType.pickup_parcel)
                 AddressExtractor.extractCabinetNumber(lines, allText) else ""
             // 原始去重语义：查重后照常新增，让同一码多次保存产生多行，进「重复值整理」手动整理
-            val save = db.codeHistoryDao().insertCheckDuplicate(CodeHistory(
+            val save = db.repository.save(CodeHistory(
                 code = result.code,
                 type = result.type.name,
                 source = result.source,
