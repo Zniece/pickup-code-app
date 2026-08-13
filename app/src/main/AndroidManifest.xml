@@ -89,6 +89,20 @@
             </intent-filter>
         </service>
 
+        <!-- 双音量键快捷触发（系统无障碍快捷方式通道；触发即退出，不常驻） -->
+        <service
+            android:name=".service.VolumeKeyShortcutService"
+            android:exported="true"
+            android:label="码上闪记（音量键快捷识别）"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/volume_key_shortcut_config" />
+        </service>
+
         <!-- 短信取件码自动识别（SMS_RECEIVED 广播；需 RECEIVE_SMS 权限） -->
         <receiver
             android:name=".service.SmsReceiver"
