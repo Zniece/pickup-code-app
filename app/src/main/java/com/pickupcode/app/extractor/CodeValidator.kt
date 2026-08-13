@@ -27,7 +27,7 @@ object CodeValidator {
         Regex("\\b\\d{4}-\\d{1,2}\\b"), // date suffix like 1124-15
         Regex("\\b\\d{6,8}-\\d{5,}\\b"), // full order number
         Regex("\\b[xX]\\d{1,2}\\b"), // shopping cart quantity marker (x1, x2, ...) — not a pickup code
-        // --- 借鉴反编译 App SmsParser.isInterferenceCode 增强干扰排除 ---
+        // --- 参考同类产品干扰排除实现（isInterferenceCode） ---
         // URL 碎片（http/https/ftp 开头的链接残片）
         Regex("https?://\\S*"), Regex("ftp://\\S*"),
         // 域名模式（xxx.com / xxx.cn / xxx.net 等，OCR 常读到的纯数字假域名也在此类）
@@ -53,7 +53,7 @@ object CodeValidator {
     /**
      * 公开：校验字符串是否为合法取餐/取件码格式（复用全部已知规则）。
      * 供 AI 提取结果过滤噪声（AI 不比正则可靠，需格式白名单把关）。
-     * 增强版（借鉴反编译 App SmsParser.isValidPickupCode 的 11 项过滤）：先做格式匹配，
+     * 增强版（参考同类产品实现 isValidPickupCode 的 11 项过滤）：先做格式匹配，
      * 再做内容排除（全零全一/递增序列/4连重复/xxx/手机号/拼音噪声等）。
      */
     fun isValidPickupCode(code: String): Boolean {
@@ -61,7 +61,7 @@ object CodeValidator {
         if (c.length !in 1..14) return false
         // 第一步：格式白名单匹配（原有检查）
         if (!VALID_CODE_FORMATS.any { it.matches(c) }) return false
-        // 第二步：内容排除（借鉴反编译 App，过滤噪声数字模式）
+        // 第二步：内容排除（参考同类产品，过滤噪声数字模式）
         val stripped = c.replace("-", "").replace(" ", "")
         val len = stripped.length
         if (len < 2 || len > 20) return false

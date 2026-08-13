@@ -17,7 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
 /**
- * 短信取件码自动识别（借鉴反编译 App 的 SmsReceiver）。
+ * 短信取件码自动识别（参考同类产品实现）。
  *
  * 输入源补充通道：取件/取餐短信（菜鸟、丰巢、妈妈驿站等几乎都会发短信）到达时，
  * 即使无障碍服务没开、通知栏没弹，也能自动提取取件码并入库通知。

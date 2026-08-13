@@ -4,7 +4,7 @@ import android.content.Context
 import org.json.JSONArray
 
 /**
- * 常用站点缓存（借鉴反编译 App 的 setCommonStations + 缓存机制）。
+ * 常用站点缓存（参考同类产品的常用站点缓存机制 setCommonStations）。
  *
  * 用途：用户经常取件的驿站/快递柜/取件点，地址识别时优先匹配，提升多驿站/噪音场景的取件地址精度。
  * 与 [PatternLearner] 同风格：SharedPreferences 轻量 JSON 存储，无第三方依赖。

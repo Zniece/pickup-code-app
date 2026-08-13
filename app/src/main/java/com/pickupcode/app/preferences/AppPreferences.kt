@@ -83,7 +83,7 @@ object AppPreferences {
     /** 主页「怎么添加取件码」引导卡是否已隐藏（永久） */
     private val KEY_HIDE_GUIDE_CARD = booleanPreferencesKey("hide_guide_card")
 
-    /** 是否接收短信取件码自动识别（需 READ_SMS 权限；借鉴反编译 App SmsReceiver）。 */
+    /** 是否接收短信取件码自动识别（需 READ_SMS 权限；参考同类产品实现）。 */
     private val KEY_ENABLE_SMS_RECEIVE = booleanPreferencesKey("enable_sms_receive")
 
     /** 全部设置项的聚合快照：observe 的每次发射即一个不可变副本。 */

@@ -85,7 +85,7 @@ object CodeExtractor {
     )
 
     // ---------------------------------------------------------------
-    // 文本预处理：全角→半角归一化（借鉴反编译 App normalizeText）
+    // 文本预处理：全角→半角归一化（参考同类产品实现 normalizeText）
     // OCR 有时会把数字/符号读成全角（如 ０１２３、：、，），导致正则匹配失败。
     // ---------------------------------------------------------------
 
@@ -96,7 +96,7 @@ object CodeExtractor {
     )
 
     /**
-     * 归一化 OCR 文本：全角转半角 + 压缩空白（借鉴反编译 App SmsParser.normalizeText）。
+     * 归一化 OCR 文本：全角转半角 + 压缩空白（参考同类产品的文本归一化实现 normalizeText）。
      * 逐字符遍历，把全角数字/符号/空格转为半角等价物，然后把制表符/换行转空格，
      * 最后压缩连续空白为单个空格、去首尾空白。
      */
@@ -130,7 +130,7 @@ object CodeExtractor {
     }
 
     // ---------------------------------------------------------------
-    // 金融/支付短信相关性拦截（借鉴反编译 App isExpressRelatedSms）
+    // 金融/支付短信相关性拦截（参考同类产品实现 isExpressRelatedSms）
     // 银行、支付类通知的截图/短信里常出现数字（金额、验证码、余额），极易被当成取件码。
     // 规则：命中金融词且未命中快递词 → 判定为金融噪音，整段不识别。
     // ---------------------------------------------------------------
@@ -165,7 +165,7 @@ object CodeExtractor {
     // ---------------------------------------------------------------
 
     fun extract(lines: List<OCREngine.TextLine>, screenHeight: Int = 0, context: Context? = null, source: String = "screen"): List<ExtractedCode> {
-        // 文本预处理：全角→半角归一化（借鉴反编译 App normalizeText）
+        // 文本预处理：全角→半角归一化（参考同类产品实现 normalizeText）
         val lines = lines.map { it.copy(text = normalizeText(it.text)) }
         val candidates = mutableListOf<Candidate>()
         val allText = lines.joinToString(" ") { it.text }

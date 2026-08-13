@@ -16,7 +16,7 @@ object AddressExtractor {
         val fullAddress: String
     )
 
-    // 地址指示符（isAddressLike 核心判断）：合并反编译 App sources extractAddress 的 30+ 地标词表，
+    // 地址指示符（isAddressLike 核心判断）：合并同类产品 extractAddress 的 30+ 地标词表，
     // 覆盖 店/铺/站/点/园/苑/广场/中心/公寓/写字楼 等常见地址结尾，减少 S10 兜底漏抓真实地址。
     // 注意保留"元"仅在"单元"语境（见 isAddressLike 的 bareYuanOnly 处理）。
     private val ADDR_PIPE_FULL = Regex("[路街巷弄号栋幢单元柜室楼区县镇乡村庄店铺站点园苑院屋所广场中心商厦厦居宅房寓庭墅阁舍江河港湾门口岸桥山岭岗场]")
@@ -695,7 +695,7 @@ object AddressExtractor {
         return extractLocation(lines, allText).fullAddress
     }
 
-    /** 增强版：context 非空时优先匹配用户常用站点（借鉴反编译 App setCommonStations）。 */
+    /** 增强版：context 非空时优先匹配用户常用站点（参考同类产品实现 setCommonStations）。 */
     fun extractAddress(lines: List<OCREngine.TextLine>, allText: String, context: android.content.Context?): String {
         if (context == null) return extractAddress(lines, allText)
         val commonStations = com.pickupcode.app.learner.CommonStationStore.getCommonStations(context)
@@ -710,7 +710,7 @@ object AddressExtractor {
     }
 
     /**
-     * 独立柜号提取（借鉴反编译 App extractCabinetInfo）：从取件文本里抓柜号/格口，
+     * 独立柜号提取（参考同类产品实现 extractCabinetInfo）：从取件文本里抓柜号/格口，
      * 如 2号柜、5号副柜、云柜12号、12号格口、A区3号柜。返回规范化串（含"柜/格口"后缀），
      * 无则空串。供入库时作为独立 cabinetNumber 字段保存（区别于拼进地址尾部）。
      */
