@@ -128,11 +128,11 @@ fun HomeScreen(
     }
             val groupOrder = listOf("今天", "昨天", "更早").filter { it in grouped }
 
-            LaunchedEffect(Unit) { vm.cleanExpired(db.repository) }
+            LaunchedEffect(Unit) { vm.cleanExpired() }
 
             // 共享操作：标记已取/删除 → 移入回收站 → snackbar 撤销
             fun markAsDone(item: CodeHistory) {
-                vm.markAsDone(item, db.repository,
+                vm.markAsDone(item,
                     onSuccess = {
                         scope.launch {
                             val result = snackbarHostState.showSnackbar(
@@ -141,7 +141,7 @@ fun HomeScreen(
                                 duration = SnackbarDuration.Short
                             )
                             if (result == SnackbarResult.ActionPerformed) {
-                                vm.undoDone(item, trashHistory, db.repository)
+                                vm.undoDone(item, trashHistory)
                             }
                         }
                     },
@@ -151,7 +151,7 @@ fun HomeScreen(
                 )
             }
 
-    LaunchedEffect(activeHistory) { vm.refreshDedupCount(db.repository) }
+    LaunchedEffect(activeHistory) { vm.refreshDedupCount() }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },

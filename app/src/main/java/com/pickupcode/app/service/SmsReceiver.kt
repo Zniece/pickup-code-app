@@ -109,7 +109,7 @@ class SmsReceiver : BroadcastReceiver() {
                     for (s in saved) {
                         RecognitionPipeline.notifySaved(context, { repo.countDuplicateGroups() },
                             s.code, s.type, s.source, s.id, s.existed)
-                        RecognitionPipeline.logSaved(TAG, s.code, s.type, s.source, fullAddress, s.existed)
+                        RecognitionPipeline.logSaved(TAG, s.code, s.type, s.source, s.address, s.existed)
                     }
                 }
             } catch (e: Exception) {
