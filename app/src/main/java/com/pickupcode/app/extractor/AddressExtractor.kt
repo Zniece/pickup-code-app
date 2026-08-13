@@ -591,6 +591,15 @@ object AddressExtractor {
     if (BuildConfig.DEBUG) {
         android.util.Log.d("CodeExtrDiag",
             "ADDR=full=[${st.fullAddress}] from=[${st.addrFrom}] station=[${st.stationName}] cabinet=[${st.cabinet}] type=[$stype] allText=" + allText)
+        // 调试快照：地址结果（与码候选同屏展示）
+        RecognitionDebugStore.captureAddress(
+            RecognitionDebugStore.AddressInfo(
+                fullAddress = st.fullAddress,
+                station = st.stationName,
+                cabinet = st.cabinet,
+                from = st.addrFrom
+            )
+        )
     }
 
     return PickupLocation(

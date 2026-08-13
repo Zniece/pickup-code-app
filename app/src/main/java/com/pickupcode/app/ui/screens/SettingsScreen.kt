@@ -345,6 +345,13 @@ private fun InputMethodsSection(sc: SettingsCtx) {
             checked = sc.s.enableSmsReceive,
             onChange = sc.onSmsEnable
         )
+        SettingsSubHeader("⏳ 到期提醒")
+        SettingsSwitch(
+            "快递取件码到期提醒",
+            sub = if (sc.s.enableExpiryRemind) "存放 3 天或文本时限到达时自动提醒" else "已关闭",
+            checked = sc.s.enableExpiryRemind,
+            onChange = { v -> sc.save { AppPreferences.setEnableExpiryRemind(sc.ctx, v) } }
+        )
     }
 }
 
@@ -465,6 +472,21 @@ private fun AboutSection(sc: SettingsCtx) {
                     .clickable { uriHandler.openUri("https://github.com/zixij644-elaborate/pickup-code-app") }
                     .padding(vertical = 2.dp)
             )
+            // 识别调试面板：仅 DEBUG 构建显示（生产裁剪）
+            if (BuildConfig.DEBUG) {
+                var showDebug by remember { mutableStateOf(false) }
+                Text(
+                    "🔍 识别调试",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ValBlue,
+                    modifier = Modifier
+                        .clickable { showDebug = true }
+                        .padding(vertical = 2.dp)
+                )
+                if (showDebug) {
+                    RecognitionDebugDialog(onDismiss = { showDebug = false })
+                }
+            }
         }
         Spacer(Modifier.height(8.dp))
         var upStatus by remember { mutableStateOf<String?>(null) }

@@ -358,6 +358,23 @@ object CodeExtractor {
                 val ctx = if (lineIdx >= 0) lines[lineIdx].text else "?"
                 android.util.Log.d("CodeExtrDiag", "cand: code=${it.code} score=${it.score} type=${it.type} src=${it.source} line=$lineIdx ctx=$ctx")
             }
+            // 调试快照（识别调试视图用）：与日志同源，UI 面板直接消费
+            RecognitionDebugStore.capture(
+                lines = lines,
+                candidates = candidates.map { c ->
+                    val li = lines.indexOfFirst { l -> l.text.contains(c.code) }
+                    RecognitionDebugStore.CandidateInfo(
+                        code = c.code,
+                        score = c.score,
+                        type = c.type.name,
+                        source = c.source,
+                        lineIndex = li,
+                        context = if (li >= 0) lines[li].text else "?"
+                    )
+                },
+                allText = allText,
+                source = source
+            )
         }
         val seen = mutableSetOf<String>()
         val results = mutableListOf<ExtractedCode>()
