@@ -1,6 +1,7 @@
 package com.pickupcode.app.kuaidi100
 
 import android.util.Log
+import com.pickupcode.app.BuildConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -91,7 +92,7 @@ object Kuaidi100Verifier {
     fun guessCourierCode(trackingNum: String): String? {
         val brand = com.pickupcode.app.extractor.BrandResolver.guessOrderBrand(trackingNum) ?: return null
         val code = BRAND_TO_KUAIDI100[brand]
-        if (code == null) Log.d(TAG, "No kuaidi100 mapping for brand: $brand (tracking: $trackingNum)")
+        if (code == null && BuildConfig.DEBUG) Log.d(TAG, "No kuaidi100 mapping for brand: $brand (tracking: $trackingNum)")
         return code
     }
 

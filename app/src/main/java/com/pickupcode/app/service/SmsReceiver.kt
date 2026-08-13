@@ -112,6 +112,8 @@ class SmsReceiver : BroadcastReceiver() {
                         RecognitionPipeline.logSaved(TAG, s.code, s.type, s.source, s.address, s.existed)
                     }
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e // 协程取消必须重抛，不能吞
             } catch (e: Exception) {
                 Log.e(TAG, "短信识别失败: ${e.message}", e)
             } finally {

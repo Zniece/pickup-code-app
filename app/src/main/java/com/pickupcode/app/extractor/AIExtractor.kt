@@ -1,6 +1,7 @@
 package com.pickupcode.app.extractor
 
 import android.util.Log
+import com.pickupcode.app.BuildConfig
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -13,6 +14,8 @@ import java.net.URL
  * AI 提取器：通过 OpenAI 兼容 API 从屏幕文字中提取取餐码/取件码
  */
 object AIExtractor {
+
+    private val IP_HOST_REGEX = Regex("""\d{1,3}(\.\d{1,3}){3}""")
 
     data class AIResult(
         val code: String,
@@ -50,6 +53,11 @@ object AIExtractor {
         try {
             val parsed = java.net.URI.create(apiBaseUrl).toURL()
             require(parsed.protocol == "https") { "API Base URL must use HTTPS" }
+            // H-C: 拒绝 IP/localhost，避免 Bearer key 发往任意端点（用户仍可配信任的域名服务）
+            val host = parsed.host
+            require(host != null && !IP_HOST_REGEX.matches(host) && host != "localhost") {
+                "API 地址请使用域名（拒绝 IP / localhost）"
+            }
             val url = URL("${parsed.toString().trimEnd('/')}/chat/completions")
             conn = url.openConnection() as HttpURLConnection
             conn.requestMethod = "POST"
@@ -99,7 +107,9 @@ object AIExtractor {
                 .replace("```", "")
                 .trim()
 
-            Log.d("AIExtractor", "AI raw content: ${content.take(500)}")
+            if (BuildConfig.DEBUG) {
+                Log.d("AIExtractor", "AI raw content: ${content.take(500)}")
+            }
             val arr = JSONArray(content)
             val results = mutableListOf<AIResult>()
             for (i in 0 until arr.length()) {

@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
+import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
@@ -369,16 +370,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     private fun verifyMapAddress(address: String, settings: AppPreferences.Settings) {
         if (settings.enableMapVerify && address.isNotBlank()) {
             scope.launch {
-                val result = GeocoderVerifier.verify(
-                    this@PickupCodeAccessibilityService, address,
-                    amapApiKey = settings.amapApiKey.ifBlank { null }
-                )
-                Log.d(TAG, "Map verify: verified=${result.verified}, confidence=${result.confidence}, provider=${result.provider}, address=$address")
-                if (result.verified) {
+                PostVerifier.verifyMap(this@PickupCodeAccessibilityService, address, settings.amapApiKey.ifBlank { null }) { conf, _ ->
                     try {
-                        PatternLearner.recordAddressVerified(
-                            this@PickupCodeAccessibilityService, address, result.confidence
-                        )
+                        PatternLearner.recordAddressVerified(this@PickupCodeAccessibilityService, address, conf)
                     } catch (e: Exception) {
                         Log.w(TAG, "recordAddressVerified failed: ${e.message}")
                     }
@@ -435,23 +429,17 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             val trackingNum = BrandResolver.findOrderNumber(allText)
             if (trackingNum != null) {
                 scope.launch {
-                    val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum, Kuaidi100Verifier.guessCourierCode(trackingNum))
-                    Log.d(TAG, "Kuaidi100 verify: success=${res.success} code=${res.pickUpCode} station=${res.pickUpStation} address=${res.pickUpAddress} err=${res.errorMsg}")
-                    if (res.success && res.pickUpCode != null) {
-                        val ocrCodes = allResults.map { it.first }
-                        val matched = ocrCodes.any { it == res.pickUpCode }
-                        if (matched) {
-                            Log.d(TAG, "Kuaidi100 confirm: OCR码 ${res.pickUpCode} 与 API 一致 ✓")
-                        } else {
-                            Log.d(TAG, "Kuaidi100 mismatch: OCR=${ocrCodes}, API=${res.pickUpCode}")
-                        }
-                        // 若 OCR 未识别出地址，且 API 返回了标准地址，定向补全（不覆盖中间用户操作）
-                        if (address.isBlank() && !res.pickUpAddress.isNullOrBlank()) {
-                            val dao = AppDatabase.getInstance(this@PickupCodeAccessibilityService).codeHistoryDao()
-                            val rec = dao.findByCodeAndType(res.pickUpCode, CodeExtractor.CodeType.pickup_parcel.name)
-                            if (rec != null && rec.pickupAddress.isBlank()) {
-                                dao.updatePickupAddress(rec.id, res.pickUpAddress)
-                            }
+                    val res = PostVerifier.verifyKuaidi100(
+                        this@PickupCodeAccessibilityService, settings.kuaidi100Key, trackingNum,
+                        allResults.map { it.first }
+                    ) ?: return@launch
+                    val pCode = res.pickUpCode ?: return@launch
+                    // 若 OCR 未识别出地址，且 API 返回了标准地址，定向补全（不覆盖中间用户操作）
+                    if (address.isBlank() && !res.pickUpAddress.isNullOrBlank()) {
+                        val dao = AppDatabase.getInstance(this@PickupCodeAccessibilityService).codeHistoryDao()
+                        val rec = dao.findByCodeAndType(pCode, CodeExtractor.CodeType.pickup_parcel.name)
+                        if (rec != null && rec.pickupAddress.isBlank()) {
+                            dao.updatePickupAddress(rec.id, res.pickUpAddress)
                         }
                     }
                 }

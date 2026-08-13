@@ -2,6 +2,7 @@ package com.pickupcode.app.service
 
 import android.content.Context
 import android.util.Log
+import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.data.CodeRepository
 import com.pickupcode.app.extractor.AddressExtractor
@@ -70,7 +71,7 @@ object RecognitionPipeline {
                 code = code,
                 type = type.name,
                 source = source,
-                rawTextSnippet = rawSnippet,
+                rawTextSnippet = sanitizeSnippet(rawSnippet),
                 pickupAddress = effAddr,
                 cabinetNumber = cabinet,
                 screenshotPath = screenshotPath,
@@ -99,8 +100,24 @@ object RecognitionPipeline {
         }
     }
 
+    // 手机号（1开头 11 位）
+    private val MOBILE_REGEX = Regex("1[3-9]\\d{9}")
+
+    /** 脱敏：掩码手机号 + 截断，避免全屏/短信原文带 PII 入库（H-A）。 */
+    private fun sanitizeSnippet(text: String?, maxLen: Int = 200): String {
+        if (text.isNullOrBlank()) return ""
+        val masked = MOBILE_REGEX.replace(text) { m ->
+            val d = m.value
+            d.take(3) + "****" + d.takeLast(4)
+        }
+        return masked.take(maxLen)
+    }
+
     /** 识别日志（三路径统一格式）。 */
     fun logSaved(tag: String, code: String, type: CodeExtractor.CodeType, source: String, address: String, existed: Boolean) {
-        Log.d(tag, "识别入库: $code (${type.name}) from $source @ $address${if (existed) " [DUPLICATE]" else ""}")
+        // H4: release 不落 PII（码/地址/来源）
+        if (BuildConfig.DEBUG) {
+            Log.d(tag, "识别入库: $code (${type.name}) from $source @ $address${if (existed) " [DUPLICATE]" else ""}")
+        }
     }
 }

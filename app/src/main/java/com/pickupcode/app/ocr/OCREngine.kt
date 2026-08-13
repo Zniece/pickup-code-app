@@ -6,9 +6,6 @@ import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.TextRecognizer
 import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
@@ -78,12 +75,10 @@ object OCREngine {
         }
     }
 
-    // Low-1: close 专用后台作用域——非阻塞关闭，主线程/调用线程不会被在途 OCR 阻塞
-    private val closeScope = CoroutineScope(Dispatchers.Default)
-
     fun close() {
-        // H3: 与 recognize 用同一把锁，避免关闭正在 process 的客户端；非阻塞：排队等锁，在途 OCR 完成后关闭
-        closeScope.launch {
+        // H3: 与 recognize 用同一把 mutex 同步关闭——避免在途 OCR 未完成就关闭客户端，
+        //     也避免 fire-and-forget 作用域泄漏。runBlocking 只阻塞到在途 OCR 完成（有 30s 超时兜底）。
+        kotlinx.coroutines.runBlocking {
             mutex.withLock {
                 try {
                     recognizer?.close()

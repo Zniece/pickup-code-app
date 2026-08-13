@@ -1,5 +1,6 @@
 package com.pickupcode.app.extractor
 
+import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.ocr.OCREngine
 
 /** 地址提取：从 OCR 行流中定位站点名/柜号/完整取件地址（自 CodeExtractor 拆出，R1）。
@@ -587,8 +588,10 @@ object AddressExtractor {
         st.stationName = extractStationName(allText)
     }
 
-    android.util.Log.d("CodeExtrDiag",
-        "ADDR=full=[${st.fullAddress}] from=[${st.addrFrom}] station=[${st.stationName}] cabinet=[${st.cabinet}] type=[$stype] allText=" + allText)
+    if (BuildConfig.DEBUG) {
+        android.util.Log.d("CodeExtrDiag",
+            "ADDR=full=[${st.fullAddress}] from=[${st.addrFrom}] station=[${st.stationName}] cabinet=[${st.cabinet}] type=[$stype] allText=" + allText)
+    }
 
     return PickupLocation(
         stationName = st.stationName.ifEmpty { "未知站点" },

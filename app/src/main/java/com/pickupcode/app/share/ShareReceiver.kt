@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
+import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
@@ -18,6 +19,7 @@ import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
+import com.pickupcode.app.service.PostVerifier
 import com.pickupcode.app.service.RecognitionPipeline
 import com.pickupcode.app.util.ImageUtils
 import kotlinx.coroutines.CoroutineScope
@@ -408,22 +410,11 @@ object ShareReceiver {
             for (s in saved) {
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val geoResult = GeocoderVerifier.verify(
-                            context, address,
-                            amapApiKey = settings.amapApiKey.ifBlank { null }
-                        )
-                        if (geoResult.verified) {
+                        PostVerifier.verifyMap(context, address, settings.amapApiKey.ifBlank { null }) { conf, fmtAddr ->
                             // M1: 定向更新 geo 字段，不动 code/address 等其他字段，避免覆盖用户编辑
                             db.repository.findByCodeAndType(s.code, s.type.name)?.let { rec ->
-                                db.repository.updateGeo(
-                                    rec.id, true,
-                                    geoResult.confidence,
-                                    geoResult.formattedAddress ?: ""
-                                )
+                                db.repository.updateGeo(rec.id, true, conf, fmtAddr ?: "")
                             }
-                            Log.d(TAG, "Geo verify OK: $address -> ${geoResult.formattedAddress} (${geoResult.confidence})")
-                        } else {
-                            Log.d(TAG, "Geo verify failed for: $address")
                         }
                     } catch (e: Exception) {
                         Log.e(TAG, "Geo verify error: ${e.message}")
@@ -438,29 +429,22 @@ object ShareReceiver {
             if (trackingNum != null) {
                 scope.launch(Dispatchers.IO) {
                     try {
-                        val res = Kuaidi100Verifier.query(settings.kuaidi100Key, trackingNum, Kuaidi100Verifier.guessCourierCode(trackingNum))
-                        Log.d(TAG, "Kuaidi100 verify: success=${res.success} code=${res.pickUpCode} address=${res.pickUpAddress} err=${res.errorMsg}")
-                        if (res.success && res.pickUpCode != null) {
-                            val ocrCodes = allResults.map { it.code }
-                            if (ocrCodes.contains(res.pickUpCode)) {
-                                Log.d(TAG, "Kuaidi100 confirm: OCR码 ${res.pickUpCode} 与 API 一致 ✓")
-                            } else {
-                                Log.d(TAG, "Kuaidi100 mismatch: OCR=${ocrCodes}, API=${res.pickUpCode}")
-                            }
-                            if (res.pickUpAddress.isNullOrBlank().not()) {
-                                // Low-3: 优先定向更新本次保存的记录（同码可能有多行历史，findByCodeAndType 会命中错误行）
-                                val targetId = savedIdsByCode[res.pickUpCode]
-                                if (targetId != null) {
-                                    db.codeHistoryDao().getByIdSuspend(targetId)?.let { rec ->
-                                        if (rec.pickupAddress.isBlank()) {
-                                            db.codeHistoryDao().update(rec.copy(pickupAddress = res.pickUpAddress))
-                                        }
-                                    }
-                                } else {
-                                    val rec = db.codeHistoryDao().findByCodeAndType(res.pickUpCode, CodeExtractor.CodeType.pickup_parcel.name)
-                                    if (rec != null && rec.pickupAddress.isBlank()) {
+                        val res = PostVerifier.verifyKuaidi100(context, settings.kuaidi100Key, trackingNum, allResults.map { it.code })
+                            ?: return@launch
+                        val pCode = res.pickUpCode ?: return@launch
+                        if (res.pickUpAddress.isNullOrBlank().not()) {
+                            // Low-3: 优先定向更新本次保存的记录（同码可能有多行历史，findByCodeAndType 会命中错误行）
+                            val targetId = savedIdsByCode[pCode]
+                            if (targetId != null) {
+                                db.codeHistoryDao().getByIdSuspend(targetId)?.let { rec ->
+                                    if (rec.pickupAddress.isBlank()) {
                                         db.codeHistoryDao().update(rec.copy(pickupAddress = res.pickUpAddress))
                                     }
+                                }
+                            } else {
+                                val rec = db.codeHistoryDao().findByCodeAndType(pCode, CodeExtractor.CodeType.pickup_parcel.name)
+                                if (rec != null && rec.pickupAddress.isBlank()) {
+                                    db.codeHistoryDao().update(rec.copy(pickupAddress = res.pickUpAddress))
                                 }
                             }
                         }

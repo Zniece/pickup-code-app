@@ -227,14 +227,11 @@ object AppPreferences {
         null
     }
 
-    /** 加密明文；空串原样返回（保持默认值语义）；Keystore 不可用时回退明文（设置不彻底不可用，回退路径记日志）。 */
+    /** 加密明文；空串原样返回（保持默认值语义）；Keystore 不可用或加密失败时抛异常拒绝存储（H2）。 */
     private fun encrypt(plain: String): String {
         if (plain.isEmpty()) return plain
         val key = keystoreKey()
-        if (key == null) {
-            android.util.Log.w(TAG, "AndroidKeyStore 密钥不可用，API Key 回退明文存储（B6）")
-            return plain
-        }
+            ?: throw IllegalStateException("AndroidKeyStore 密钥不可用，拒绝明文存储 API Key")
         return try {
             val cipher = Cipher.getInstance(AES_TRANSFORM)
             cipher.init(Cipher.ENCRYPT_MODE, key)
@@ -242,8 +239,8 @@ object AppPreferences {
             ENC_PREFIX + Base64.encodeToString(cipher.iv, Base64.NO_WRAP) +
                 "." + Base64.encodeToString(ct, Base64.NO_WRAP)
         } catch (e: Exception) {
-            android.util.Log.w(TAG, "AES-GCM 加密失败，API Key 回退明文存储（B6）: ${e.message}")
-            plain
+            // H2: 加密失败拒绝明文落盘，抛异常让写入失败（调用方 runCatching 捕获，保留旧值）
+            throw IllegalStateException("AES-GCM 加密失败，拒绝明文存储 API Key", e)
         }
     }
 
