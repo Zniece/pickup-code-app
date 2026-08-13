@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Log
 import com.pickupcode.app.data.AppDatabase
@@ -20,14 +19,13 @@ import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
 import com.pickupcode.app.service.RecognitionPipeline
+import com.pickupcode.app.util.ImageUtils
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
-import java.io.FileOutputStream
 
 object ShareReceiver {
 
@@ -271,7 +269,7 @@ object ShareReceiver {
     ) {
         val bitmap = withContext(Dispatchers.IO) {
             try {
-                decodeSampledBitmap(context, uri)
+                ImageUtils.decodeSampledBitmap(context, uri)
             } catch (e: Exception) {
                 Log.e(TAG, "Read image failed: ${e.message}")
                 null
@@ -280,18 +278,7 @@ object ShareReceiver {
 
         // Save shared image as screenshot for detail page
         val screenshotPath = withContext(Dispatchers.IO) {
-            try {
-                val dir = File(context.cacheDir, "shared_images")
-                dir.mkdirs()
-                val file = File(dir, "share_${System.currentTimeMillis()}.jpg")
-                FileOutputStream(file).use { out ->
-                    bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 85, out)
-                }
-                file.absolutePath
-            } catch (e: Exception) {
-                Log.e(TAG, "Save screenshot failed: ${e.message}")
-                ""
-            }
+            ImageUtils.saveJpeg(context, "shared_images", "share", bitmap)
         }
 
         // OCR + 券码检测（都在 recycle 前用同一张 bitmap）
@@ -490,45 +477,5 @@ object ShareReceiver {
         CodeExtractor.CodeType.pickup_food -> !settings.enableFoodCodes
         CodeExtractor.CodeType.pickup_parcel -> !settings.enableParcelCodes
         CodeExtractor.CodeType.coupon -> !settings.enableCouponCodes
-    }
-
-    /**
-     * 降采样解码分享图片：先读尺寸按 inSampleSize 缩放，避免 4000×3000 全尺寸解码 OOM。
-     * minSdk 26 < 28：ImageDecoder（自动应用 EXIF 旋转）不可用，保留 BitmapFactory + 手动读 EXIF 旋转。
-     */
-    private fun decodeSampledBitmap(context: Context, uri: Uri): Bitmap? {
-        // 第一遍：只读边界拿尺寸（不分配像素）
-        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-        // 计算采样倍数：目标最长边 ~1600px（OCR 分辨率足够，兼顾内存）。
-        // Medium-3: 原 while (dim / 2 >= 1600) 在 dim∈[1600,3200) 区间不降采样，改为按最长边直接判定
-        var sample = 1
-        var dim = maxOf(bounds.outWidth, bounds.outHeight)
-        while (dim >= 1600) { sample *= 2; dim /= 2 }
-
-        val opts = BitmapFactory.Options().apply {
-            inSampleSize = sample
-        }
-        val bmp = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, opts) }
-            ?: return null
-
-        // 手动应用 EXIF 旋转（相册直出的竖拍图带 Orientation，不旋转会歪 90°/左右颠倒）
-        return try {
-            val rotation = context.contentResolver.openInputStream(uri)?.use {
-                androidx.exifinterface.media.ExifInterface(it).rotationDegrees
-            } ?: 0
-            if (rotation == 0) {
-                bmp
-            } else {
-                val matrix = android.graphics.Matrix().apply { postRotate(rotation.toFloat()) }
-                val rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, matrix, true)
-                if (rotated !== bmp) bmp.recycle()
-                rotated
-            }
-        } catch (_: Exception) {
-            bmp
-        }
     }
 }
