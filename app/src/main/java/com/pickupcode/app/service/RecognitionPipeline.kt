@@ -7,9 +7,12 @@ import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.data.CodeRepository
 import com.pickupcode.app.extractor.AddressExtractor
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.ExpiryExtractor
 import com.pickupcode.app.learner.CommonStationStore
 import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
+import com.pickupcode.app.preferences.AppPreferences
+import kotlinx.coroutines.flow.first
 
 /**
  * 识别后处理管线——三条路径（无障碍/分享/短信）共用的「逐码落库 + 通知」逻辑。
@@ -67,6 +70,9 @@ object RecognitionPipeline {
             val cabinet = if (type == CodeExtractor.CodeType.pickup_parcel)
                 AddressExtractor.extractCabinetNumber(lines, allText) else ""
 
+            // 到期时刻（v6）：快递码算提醒时刻；取餐/券码恒为 0 不提醒
+            val expiryTime = ExpiryExtractor.expiryTimeFor(rawSnippet, type, timestamp) ?: 0L
+
             val save = repo.save(CodeHistory(
                 code = code,
                 type = type.name,
@@ -77,9 +83,15 @@ object RecognitionPipeline {
                 screenshotPath = screenshotPath,
                 shareSourcePkg = shareSourcePkg,
                 shareSourceName = shareSourceName,
-                timestamp = timestamp
+                timestamp = timestamp,
+                expiryTime = expiryTime
             ))
             saved.add(SavedCode(code, type, source, save.id, save.existed, effAddr))
+
+            // 到期提醒排程：仅快递码且非重复入库时安排（重复同码会覆盖旧闹钟，见 scheduleRemind FLAG_UPDATE_CURRENT）
+            if (expiryTime > 0 && !save.existed && AppPreferences.isExpiryRemindEnabled(context)) {
+                CodeNotificationManager.scheduleExpiryReminder(context, code, type, source, expiryTime)
+            }
 
             // 常用站点学习：带地址的取件记录累计站点频次
             if (type == CodeExtractor.CodeType.pickup_parcel && effAddr.isNotBlank()) {

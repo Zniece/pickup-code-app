@@ -124,15 +124,33 @@ object CodeNotificationManager {
     private const val EXTRA_REMIND_CODE = "remind_code"
     private const val EXTRA_REMIND_TYPE = "remind_type"
     private const val EXTRA_REMIND_SOURCE = "remind_source"
+    private const val EXTRA_REMIND_KIND = "remind_kind"
+
+    /** 提醒类型：later=用户手动稍后提醒；expiry=自动到期提醒（文案不同）。 */
+    private const val KIND_LATER = "later"
+    private const val KIND_EXPIRY = "expiry"
 
     /** 稍后提醒：delayMs 毫秒后（默认 1 小时）重新推一条提醒通知。 */
     fun remindLater(context: Context, code: String, type: CodeExtractor.CodeType,
                     source: String, delayMs: Long = 60L * 60 * 1000) {
+        scheduleRemind(context, code, type, source, delayMs, KIND_LATER)
+    }
+
+    /** 到期提醒：expiryAt 时刻（或立即，若已过）推一条"可能快过期"提醒（DB v6）。 */
+    fun scheduleExpiryReminder(context: Context, code: String, type: CodeExtractor.CodeType,
+                               source: String, expiryAt: Long) {
+        val delayMs = (expiryAt - System.currentTimeMillis()).coerceAtLeast(1_000L)
+        scheduleRemind(context, code, type, source, delayMs, KIND_EXPIRY)
+    }
+
+    private fun scheduleRemind(context: Context, code: String, type: CodeExtractor.CodeType,
+                               source: String, delayMs: Long, kind: String) {
         val alarm = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, RemindReceiver::class.java).apply {
             putExtra(EXTRA_REMIND_CODE, code)
             putExtra(EXTRA_REMIND_TYPE, type.name)
             putExtra(EXTRA_REMIND_SOURCE, source)
+            putExtra(EXTRA_REMIND_KIND, kind)
         }
         val pi = PendingIntent.getBroadcast(context, safeId(type, code) and 0x7fffffff, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
@@ -145,8 +163,9 @@ object CodeNotificationManager {
         }
     }
 
-    /** RemindReceiver 在 onReceive 里调用：真正弹出提醒通知。 */
-    fun showReminder(context: Context, code: String, type: CodeExtractor.CodeType, source: String) {
+    /** RemindReceiver 在 onReceive 里调用：真正弹出提醒通知。kind: later/expiry（文案区分）。 */
+    fun showReminder(context: Context, code: String, type: CodeExtractor.CodeType, source: String,
+                     kind: String = KIND_LATER) {
         if (code.isBlank()) return
         // Android 13+ 无通知权限时静默跳过（与 show/showDuplicate 一致），避免无效提醒
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
@@ -159,10 +178,15 @@ object CodeNotificationManager {
         try {
             val style = typeStyle(type)
             val pendingIntent = launchPendingIntent(context)
+            val (title, text) = if (kind == KIND_EXPIRY) {
+                "⏳ 取件码可能快到期：$code" to "存放已久，记得及时去取：$code（$source）"
+            } else {
+                "⏰ 稍后提醒：${style.title} $code" to "记得去取：$code（$source）"
+            }
             val notification = NotificationCompat.Builder(context, style.channelId)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("⏰ 稍后提醒：${style.title} $code")
-                .setContentText("记得去取：$code（$source）")
+                .setContentTitle(title)
+                .setContentText(text)
                 .setAutoCancel(true)
                 .setPriority(NotificationCompat.PRIORITY_HIGH)
                 .setContentIntent(pendingIntent)

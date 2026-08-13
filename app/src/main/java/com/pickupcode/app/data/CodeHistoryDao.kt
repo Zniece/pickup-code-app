@@ -26,6 +26,10 @@ interface CodeHistoryDao {
     @Query("SELECT * FROM code_history WHERE code = :code AND type = :type AND isActive = 1 ORDER BY timestamp DESC LIMIT 1")
     suspend fun findByCodeAndType(code: String, type: String): CodeHistory?
 
+    /** 到期提醒复查：该码是否仍有活跃记录（提醒发出前调用，已取则不再打扰）。 */
+    @Query("SELECT COUNT(*) FROM code_history WHERE code = :code AND type = :type AND isActive = 1")
+    suspend fun countActiveByCodeAndType(code: String, type: String): Int
+
     /** 查同 code 不同类型的记录（重复值检测） */
     @Query("SELECT * FROM code_history WHERE code = :code AND type != :type AND isActive = 1 ORDER BY timestamp DESC")
     suspend fun findSameCodeDifferentType(code: String, type: String): List<CodeHistory>
@@ -151,7 +155,7 @@ interface CodeHistoryDao {
     }
 }
 
-@Database(entities = [CodeHistory::class], version = 5, exportSchema = false)
+@Database(entities = [CodeHistory::class], version = 6, exportSchema = false)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun codeHistoryDao(): CodeHistoryDao
     val repository: CodeRepository by lazy { CodeRepository(codeHistoryDao()) }
@@ -188,6 +192,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /** 5 → 6：新增到期提醒时刻列。ALTER 保留既有数据，默认 0（不提醒）。 */
+        private val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE code_history ADD COLUMN expiryTime INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
@@ -198,7 +209,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "pickup_code_db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                     // 兜底迁移：无 exportSchema 时首轮迁移难以严格校验 schema，仍保留 destructive 作为最后的保险，
                     // 避免未知后续版本导致无法升级卡死；已通过 addMigrations 保住 3→4 的数据。
                     .fallbackToDestructiveMigration()

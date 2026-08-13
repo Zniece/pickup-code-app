@@ -8,6 +8,7 @@ import android.util.Base64
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import java.security.KeyStore
@@ -86,6 +87,9 @@ object AppPreferences {
     /** 是否接收短信取件码自动识别（需 READ_SMS 权限；参考同类产品实现）。 */
     private val KEY_ENABLE_SMS_RECEIVE = booleanPreferencesKey("enable_sms_receive")
 
+    /** 是否启用到期提醒（快递码存放 3 天/文本时限到达时自动提醒；v6）。 */
+    private val KEY_ENABLE_EXPIRY_REMIND = booleanPreferencesKey("enable_expiry_remind")
+
     /** 全部设置项的聚合快照：observe 的每次发射即一个不可变副本。 */
     data class Settings(
         val confidenceThreshold: Float = 0.5f,
@@ -105,7 +109,8 @@ object AppPreferences {
         val kuaidi100Key: String = "",
         val hideAccessibilityCard: Boolean = false,
         val hideGuideCard: Boolean = false,
-        val enableSmsReceive: Boolean = false
+        val enableSmsReceive: Boolean = false,
+        val enableExpiryRemind: Boolean = true
     )
 
     /** 订阅设置 Flow：任一 key 变化即发射新的 [Settings] 快照；UI 侧用 collectAsState 消费。 */
@@ -129,10 +134,18 @@ object AppPreferences {
                 kuaidi100Key = decrypt(prefs[KEY_KUAIDI100_KEY] ?: ""),
                 hideAccessibilityCard = prefs[KEY_HIDE_ACCESSIBILITY_CARD] ?: false,
                 hideGuideCard = prefs[KEY_HIDE_GUIDE_CARD] ?: false,
-                enableSmsReceive = prefs[KEY_ENABLE_SMS_RECEIVE] ?: false
+                enableSmsReceive = prefs[KEY_ENABLE_SMS_RECEIVE] ?: false,
+                enableExpiryRemind = prefs[KEY_ENABLE_EXPIRY_REMIND] ?: true
             )
         }
     }
+
+    /** 到期提醒开关（供入库管线排程前检查）。 */
+    suspend fun isExpiryRemindEnabled(context: Context): Boolean =
+        context.dataStore.data.first()[KEY_ENABLE_EXPIRY_REMIND] ?: true
+
+    suspend fun setEnableExpiryRemind(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_EXPIRY_REMIND, value)
 
     // ── 泛化写入：消除 18 个重复的 dataStore.edit 样板 ──
     private suspend fun <T> write(context: Context, key: Preferences.Key<T>, value: T) {
