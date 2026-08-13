@@ -5,9 +5,9 @@
 自动识别截屏或分享图片中的取餐码，取件码和券码，通知提醒 + 一键标记已取。
 
 <div align="center">
+  <img src="screenshots/Screenshot_20260813_164743.jpg" width="30%" alt="截图 3" />
   <img src="screenshots/Screenshot_20260813_163603.jpg" width="30%" alt="截图 1" />
   <img src="screenshots/Screenshot_20260813_163606.jpg" width="30%" alt="截图 2" />
-  <img src="screenshots/Screenshot_20260813_164743.jpg" width="30%" alt="截图 3" />
   <img src="screenshots/Screenshot_20260813_165152.jpg" width="30%" alt="截图 4" />
   <img src="screenshots/Screenshot_20260813_165244.jpg" width="30%" alt="截图 5" />
   <img src="screenshots/Screenshot_20260813_165248.jpg" width="30%" alt="截图 6" />
