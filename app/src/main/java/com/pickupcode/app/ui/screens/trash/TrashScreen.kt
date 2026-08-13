@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -20,7 +21,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -73,34 +73,14 @@ fun TrashScreen(onBack: () -> Unit) {
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            // 提示 + 批量操作
-            Row(
+            Text(
+                "已取/已删除的记录在此保留24小时",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "已取/已删除的记录在此保留24小时",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        scope.launch(Dispatchers.IO) {
-                            trashHistory.forEach { db.codeHistoryDao().restore(it.id) }
-                        }
-                    }) { Text("全部恢复") }
-                    TextButton(onClick = {
-                        scope.launch(Dispatchers.IO) {
-                            trashHistory.forEach { db.codeHistoryDao().deleteById(it.id) }
-                        }
-                    }) {
-                        Text("全部清空", color = MaterialTheme.colorScheme.error)
-                    }
-                }
-            }
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            )
 
             if (trashHistory.isEmpty()) {
                 Box(
@@ -116,7 +96,9 @@ fun TrashScreen(onBack: () -> Unit) {
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(6.dp),
-                    modifier = Modifier.padding(horizontal = 16.dp)
+                    modifier = Modifier
+                        .weight(1f) // 占满 Column 剩余空间，避免列表/空状态布局错位
+                        .padding(horizontal = 16.dp)
                 ) {
                     items(trashHistory, key = { it.id }) { item ->
                         TrashCard(
@@ -176,15 +158,16 @@ private fun TrashCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            Spacer(Modifier.height(8.dp))
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(3.dp)
-                    .padding(vertical = 6.dp),
+                    .height(4.dp), // 与默认 strokeWidth(4dp) 一致，避免 3dp 裁剪 stroke 导致横线错位
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )
+            Spacer(Modifier.height(8.dp))
             Text(
                 text = "剩余 ${formatRemaining(item.doneAt, tick)}",
                 style = MaterialTheme.typography.labelSmall,

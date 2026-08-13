@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>一键闪记 — UI 重设计预览</title>
+<style>
+  /* ═══════════════ Design Tokens ═══════════════ */
+  :root {
+    --primary: #3B82F6;
+    --primary-light: #DBEAFE;
+    --primary-dark: #2563EB;
+    --secondary: #8B5CF6;
+    --secondary-light: #F3F0FF;
+    --amber: #F59E0B;
+    --surface: #FFFFFF;
+    --on-surface: #111827;
+    --on-surface-secondary: #6B7280;
+    --on-surface-tertiary: #9CA3AF;
+    --surface-elevated: #FFFFFF;
+    --bg: #F3F4F6;
+    --error: #DC2626;
+    --error-light: #FEE2E2;
+    --green: #10B981;
+    --radius-sm: 10px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+    --shadow-card: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+    --shadow-elevated: 0 4px 12px rgba(0,0,0,0.08);
+    --shadow-fab: 0 4px 16px rgba(59,130,246,0.25);
+    --type-food: #3B82F6;
+    --type-parcel: #8B5CF6;
+    --type-coupon: #F59E0B;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "SF Mono", "Fira Code", "Cascadia Code", monospace;
+    --transition-fast: 150ms ease;
+    --transition-normal: 250ms ease;
+  }
+
+  .dark {
+    --primary: #60A5FA;
+    --primary-light: #1E3A5F;
+    --primary-dark: #93C5FD;
+    --secondary: #A78BFA;
+    --secondary-light: #3B2A63;
+    --amber: #FBBF24;
+    --surface: #111827;
+    --on-surface: #E5E7EB;
+    --on-surface-secondary: #9CA3AF;
+    --on-surface-tertiary: #6B7280;
+    --surface-elevated: #1F2937;
+    --bg: #0F172A;
+    --shadow-card: none;
+    --shadow-elevated: 0 4px 12px rgba(0,0,0,0.3);
+    --shadow-fab: 0 4px 16px rgba(96,165,250,0.2);
+  }
+
+  /* ═══════════════ Reset ═══════════════ */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--bg);
+    display: flex; justify-content: center; align-items: flex-start;
+    min-height: 100vh; padding: 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .phone {
+    width: 390px; max-width: 100%;
+    background: var(--bg);
+    border-radius: 40px;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.15), 0 0 0 2px #333;
+    position: relative; height: 844px;
+  }
+
+  /* ═══════════════ Controls ═══════════════ */
+  .controls {
+    position: fixed; top: 20px; right: 20px;
+    display: flex; gap: 8px; z-index: 100;
+  }
+  .ctrl-btn {
+    padding: 8px 14px; border-radius: 20px;
+    border: 1.5px solid var(--on-surface-secondary);
+    background: var(--surface); color: var(--on-surface);
+    font-size: 13px; cursor: pointer; font-family: var(--font-sans);
+    transition: all var(--transition-fast);
+  }
+  .ctrl-btn.active { background: var(--primary); color: white; border-color: var(--primary); }
+
+  /* ═══════════════ Status Bar ═══════════════ */
+  .status-bar {
+    height: 44px; background: var(--primary-light);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; font-size: 12px; font-weight: 600;
+    color: var(--primary-dark);
+  }
+
+  /* ═══════════════ Top Bar ═══════════════ */
+  .top-bar {
+    height: 50px; background: var(--primary-light);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px;
+  }
+  .top-bar .title {
+    font-size: 20px; font-weight: 700;
+    color: var(--on-surface); letter-spacing: -0.3px;
+  }
+  .top-bar .actions { display: flex; gap: 2px; }
+  .top-bar .icon-btn {
+    width: 38px; height: 38px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: none;
+    cursor: pointer; color: var(--on-surface-secondary);
+    font-size: 18px; transition: background var(--transition-fast);
+  }
+  .top-bar .icon-btn:hover { background: rgba(0,0,0,0.06); }
+  .dark .top-bar .icon-btn:hover { background: rgba(255,255,255,0.06); }
+
+  /* ═══════════════ Search Bar ═══════════════ */
+  .search-wrapper {
+    padding: 0 16px 10px;
+    background: var(--primary-light);
+  }
+  .search-box {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface);
+    border-radius: var(--radius-lg);
+    padding: 10px 16px;
+    border: 1.5px solid transparent;
+    transition: border var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .search-box:focus-within {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+  }
+  .search-box svg { flex-shrink: 0; color: var(--on-surface-tertiary); }
+  .search-box input {
+    flex: 1; border: none; outline: none;
+    font-size: 15px; font-family: var(--font-sans);
+    background: transparent; color: var(--on-surface);
+  }
+  .search-box input::placeholder { color: var(--on-surface-tertiary); }
+  .search-clear {
+    display: none; width: 22px; height: 22px; border-radius: 50%;
+    background: var(--on-surface-tertiary); color: white;
+    border: none; font-size: 12px; cursor: pointer;
+    align-items: center; justify-content: center;
+  }
+  .search-clear.visible { display: flex; }
+
+  /* ═══════════════ Filter Chips ═══════════════ */
+  .filter-row {
+    display: flex; gap: 8px; padding: 0 16px 12px;
+    background: var(--primary-light); overflow-x: auto;
+  }
+  .filter-row::-webkit-scrollbar { height: 0; }
+  .chip {
+    padding: 7px 15px; border-radius: 20px; font-size: 13px; font-weight: 500;
+    background: transparent; color: var(--on-surface-secondary);
+    border: 1.5px solid var(--on-surface-tertiary);
+    cursor: pointer; white-space: nowrap; transition: all var(--transition-fast);
+  }
+  .chip.active {
+    background: var(--surface);
+    border-color: transparent;
+    color: var(--on-surface);
+    box-shadow: var(--shadow-card);
+  }
+  .chip .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+  .chip .dot.food { background: var(--type-food); }
+  .chip .dot.parcel { background: var(--type-parcel); }
+  .chip .dot.coupon { background: var(--type-coupon); }
+
+  /* ═══════════════ Content ═══════════════ */
+  .content {
+    overflow-y: auto; height: calc(844px - 44px - 50px - 56px - 42px - 76px);
+    background: var(--bg);
+  }
+
+  /* ═══════════════ Collapsed Banner ═══════════════ */
+  .banner-strip {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 16px; margin: 10px 16px 0;
+    background: var(--primary-light);
+    border-radius: var(--radius-sm);
+    cursor: pointer; transition: background var(--transition-fast);
+  }
+  .banner-strip:hover { background: var(--secondary-light); }
+  .banner-strip .text { font-size: 13px; color: var(--primary-dark); display: flex; align-items: center; gap: 6px; }
+  .banner-strip .chevron {
+    color: var(--on-surface-tertiary); font-size: 12px;
+    transition: transform var(--transition-normal);
+  }
+  .banner-strip.open .chevron { transform: rotate(180deg); }
+
+  .banner-expand {
+    max-height: 0; overflow: hidden; transition: max-height var(--transition-normal);
+    margin: 0 16px; background: var(--primary-light);
+    border-radius: 0 0 var(--radius-sm) var(--radius-sm);
+  }
+  .banner-expand.open { max-height: 120px; }
+  .banner-expand .inner { padding: 8px 16px 12px; }
+  .banner-expand .item {
+    font-size: 13px; color: var(--on-surface-secondary); padding: 4px 0;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .banner-expand .item::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--primary); flex-shrink: 0; }
+
+  /* ═══════════════ Time Group ═══════════════ */
+  .group-header {
+    position: sticky; top: 0; z-index: 2;
+    padding: 16px 16px 8px;
+    font-size: 13px; font-weight: 600; color: var(--on-surface-secondary);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    background: var(--bg);
+  }
+  .group-header::first-letter { text-transform: uppercase; }
+
+  /* ═══════════════ Code Card ═══════════════ */
+  .card-wrapper {
+    position: relative; margin: 0 16px 8px;
+    overflow: hidden; border-radius: var(--radius-md);
+  }
+  .card-inner {
+    display: flex; align-items: center;
+    background: var(--surface-elevated);
+    border-radius: var(--radius-md);
+    padding: 14px 14px 14px 0;
+    box-shadow: var(--shadow-card);
+    position: relative;
+    transform: translateX(0);
+    transition: transform var(--transition-normal) cubic-bezier(0.22, 1, 0.36, 1);
+    will-change: transform;
+  }
+  .card-inner.swiped { transform: translateX(-120px); }
+
+  /* Left accent stripe */
+  .card-stripe {
+    width: 4px; min-height: 60px; align-self: stretch;
+    border-radius: 4px 0 0 4px; margin-right: 12px; flex-shrink: 0;
+  }
+  .card-stripe.food { background: var(--type-food); }
+  .card-stripe.parcel { background: var(--type-parcel); }
+  .card-stripe.coupon { background: var(--type-coupon); }
+
+  .card-body { flex: 1; min-width: 0; }
+  .card-code {
+    font-size: 19px; font-weight: 700; color: var(--on-surface);
+    letter-spacing: -0.2px; margin-bottom: 3px;
+    font-family: var(--font-mono);
+  }
+  .card-meta {
+    font-size: 12px; color: var(--on-surface-secondary);
+    display: flex; align-items: center; gap: 4px;
+  }
+  .card-addr {
+    font-size: 12px; color: var(--on-surface-secondary);
+    margin-top: 2px;
+  }
+  .card-type-badge {
+    font-size: 10px; font-weight: 600; padding: 2px 8px;
+    border-radius: 8px; margin-left: auto; flex-shrink: 0;
+    margin-right: 4px;
+  }
+  .card-type-badge.food { background: #DBEAFE; color: #2563EB; }
+  .card-type-badge.parcel { background: #F3F0FF; color: #6D28D9; }
+  .card-type-badge.coupon { background: #FEF3C7; color: #92400E; }
+  .dark .card-type-badge.food { background: #1E3A5F; color: #93C5FD; }
+  .dark .card-type-badge.parcel { background: #3B2A63; color: #C4B5FD; }
+  .dark .card-type-badge.coupon { background: #422006; color: #FCD34D; }
+
+  /* Swipe action buttons (behind card) */
+  .swipe-actions {
+    position: absolute; right: 0; top: 0; bottom: 0;
+    display: flex; gap: 0;
+  }
+  .swipe-btn {
+    width: 60px; border: none; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; transition: filter var(--transition-fast);
+  }
+  .swipe-btn:hover { filter: brightness(1.1); }
+  .swipe-btn.done { background: var(--primary); color: white; }
+  .swipe-btn.delete { background: var(--error); color: white; border-radius: 0 var(--radius-md) var(--radius-md) 0; }
+
+  /* ═══════════════ Empty State ═══════════════ */
+  .empty-state {
+    display: flex; flex-direction: column; align-items: center;
+    padding: 60px 32px; text-align: center;
+  }
+  .empty-illustration {
+    width: 100px; height: 100px; border-radius: 50%;
+    background: var(--primary-light);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 40px; margin-bottom: 20px;
+  }
+  .empty-title { font-size: 17px; font-weight: 600; color: var(--on-surface); margin-bottom: 6px; }
+  .empty-desc { font-size: 14px; color: var(--on-surface-secondary); line-height: 1.6; }
+  .empty-hint { display: flex; gap: 16px; margin-top: 20px; }
+  .empty-hint .hint {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 6px; font-size: 12px; color: var(--on-surface-secondary);
+  }
+  .empty-hint .hint-icon {
+    width: 44px; height: 44px; border-radius: 14px;
+    background: var(--surface-elevated);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; box-shadow: var(--shadow-card);
+  }
+
+  /* ═══════════════ FAB ═══════════════ */
+  .fab {
+    position: absolute; bottom: 24px; right: 24px;
+    width: 56px; height: 56px; border-radius: 50%;
+    background: var(--primary); border: none;
+    color: white; font-size: 28px; display: flex;
+    align-items: center; justify-content: center;
+    cursor: pointer;
+    box-shadow: var(--shadow-fab);
+    transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+  }
+  .fab:hover { transform: scale(1.06); }
+  .fab:active { transform: scale(0.94); }
+
+  /* ═══════════════ Trash Screen ═══════════════ */
+  .trash-top { display: none; }
+  .trash-active .home-top { display: none; }
+  .trash-active .trash-top { display: block; }
+  .trash-active .trash-active-show { display: flex !important; }
+  .trash-active .home-hide { display: none !important; }
+
+  .trash-header {
+    height: 50px; background: var(--primary-light);
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 16px;
+  }
+  .trash-header .title {
+    font-size: 18px; font-weight: 600; color: var(--on-surface);
+  }
+
+  .trash-actions-bar {
+    display: flex; gap: 12px; padding: 12px 16px;
+  }
+  .trash-actions-bar .btn {
+    padding: 8px 16px; border-radius: 20px; border: none;
+    font-size: 13px; font-weight: 500; cursor: pointer;
+    font-family: var(--font-sans);
+    transition: background var(--transition-fast);
+  }
+  .btn-outline {
+    background: transparent; color: var(--primary);
+    border: 1.5px solid var(--primary) !important;
+  }
+  .btn-danger {
+    background: transparent; color: var(--error);
+    border: 1.5px solid var(--error) !important;
+  }
+
+  .trash-card .card-code {
+    text-decoration: line-through; color: var(--on-surface-tertiary); opacity: 0.6;
+  }
+  .trash-progress {
+    width: 100%; height: 3px; background: var(--bg); border-radius: 2px; margin-top: 6px;
+  }
+  .trash-progress-bar {
+    height: 100%; background: var(--on-surface-tertiary); border-radius: 2px;
+    transition: width 60s linear;
+  }
+  .trash-remain {
+    font-size: 11px; color: var(--on-surface-tertiary); margin-top: 3px;
+  }
+
+  /* ═══════════════ Animations ═══════════════ */
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .card-wrapper { animation: fadeInUp 0.35s ease both; }
+  .card-wrapper:nth-child(1) { animation-delay: 0s; }
+  .card-wrapper:nth-child(2) { animation-delay: 0.05s; }
+  .card-wrapper:nth-child(3) { animation-delay: 0.1s; }
+  .card-wrapper:nth-child(4) { animation-delay: 0.15s; }
+  .card-wrapper:nth-child(5) { animation-delay: 0.2s; }
+  .card-wrapper:nth-child(6) { animation-delay: 0.25s; }
+  .card-wrapper:nth-child(7) { animation-delay: 0.3s; }
+
+  /* ═══════════════ Scrollbar ═══════════════ */
+  .content::-webkit-scrollbar { width: 0; }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <button class="ctrl-btn active" onclick="switchScreen('home')">首页</button>
+  <button class="ctrl-btn" onclick="switchScreen('trash')">回收站</button>
+  <button class="ctrl-btn" onclick="toggleTheme()">浅色/深色</button>
+</div>
+
+<div class="phone" id="phone">
+  <!-- Status Bar -->
+  <div class="status-bar">9:41</div>
+
+  <!-- Home Header -->
+  <div class="home-top">
+    <div class="top-bar">
+      <span class="title">一键闪记</span>
+      <div class="actions">
+        <button class="icon-btn" title="统计">📊</button>
+        <button class="icon-btn" title="设置">⚙</button>
+      </div>
+    </div>
+    <!-- Search -->
+    <div class="search-wrapper">
+      <div class="search-box">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" id="searchInput" placeholder="搜索码、地址或来源…" oninput="onSearch()">
+        <button class="search-clear" id="searchClear" onclick="clearSearch()">✕</button>
+      </div>
+    </div>
+    <!-- Filter Chips -->
+    <div class="filter-row">
+      <span class="chip active" data-filter="all" onclick="setFilter('all', this)">全部</span>
+      <span class="chip" data-filter="food" onclick="setFilter('food', this)"><span class="dot food"></span>取餐</span>
+      <span class="chip" data-filter="parcel" onclick="setFilter('parcel', this)"><span class="dot parcel"></span>取件</span>
+      <span class="chip" data-filter="coupon" onclick="setFilter('coupon', this)"><span class="dot coupon"></span>券码</span>
+    </div>
+  </div>
+
+  <!-- Trash Header -->
+  <div class="trash-top">
+    <div class="trash-header">
+      <button class="icon-btn" onclick="switchScreen('home')">←</button>
+      <span class="title">回收站</span>
+      <div style="width:38px;"></div>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="content" id="content"
+       data-swipe-threshold="80"
+       ontouchstart="handleTouchStart(event)"
+       ontouchmove="handleTouchMove(event)"
+       ontouchend="handleTouchEnd(event)"
+       onmousedown="handleMouseDown(event)"
+       onmousemove="handleMouseMove(event)"
+       onmouseup="handleMouseUp(event)"
+       onmouseleave="handleMouseUp(event)">
+
+    <!-- ══════ HOME ══════ -->
+    <div id="homeContent">
+      <!-- Collapsed guide banner -->
+      <div class="banner-strip" id="guideBanner" onclick="toggleGuide()">
+        <span class="text">📥 怎么添加取餐码/取件码/券码?</span>
+        <span class="chevron">▾</span>
+      </div>
+      <div class="banner-expand" id="guideExpand">
+        <div class="inner">
+          <div class="item">从短信/聊天 App 中分享到一键闪记</div>
+          <div class="item">点右下角 + 手动粘贴</div>
+          <div class="item">开启无障碍服务后自动 OCR 识别</div>
+        </div>
+      </div>
+
+      <!-- Time Groups -->
+      <div class="group-header">今天</div>
+
+      <div class="card-wrapper" data-type="food" data-date="today" data-search="美团外卖 3-4-5678 公司前台">
+        <div class="card-inner" id="card-1">
+          <div class="card-stripe food"></div>
+          <div class="card-body">
+            <div class="card-code">3-4-5678</div>
+            <div class="card-meta">美团外卖 · 12:30</div>
+            <div class="card-addr">公司前台</div>
+          </div>
+          <div class="card-type-badge food">取餐</div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" onclick="markDone(1)">✓</button>
+          <button class="swipe-btn delete" onclick="markDelete(1)">🗑</button>
+        </div>
+      </div>
+
+      <div class="card-wrapper" data-type="parcel" data-date="today" data-search="菜鸟驿站 10-2-7507 小区北门">
+        <div class="card-inner" id="card-2">
+          <div class="card-stripe parcel"></div>
+          <div class="card-body">
+            <div class="card-code">10-2-7507</div>
+            <div class="card-meta">菜鸟驿站 · 11:15</div>
+            <div class="card-addr">小区北门菜鸟驿站</div>
+          </div>
+          <div class="card-type-badge parcel">取件</div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" onclick="markDone(2)">✓</button>
+          <button class="swipe-btn delete" onclick="markDelete(2)">🗑</button>
+        </div>
+      </div>
+
+      <div class="card-wrapper" data-type="coupon" data-date="today" data-search="麦当劳 MC20240601">
+        <div class="card-inner" id="card-3">
+          <div class="card-stripe coupon"></div>
+          <div class="card-body">
+            <div class="card-code">MC20240601</div>
+            <div class="card-meta">麦当劳 · 10:45</div>
+          </div>
+          <div class="card-type-badge coupon">券码</div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" onclick="markDone(3)">✓</button>
+          <button class="swipe-btn delete" onclick="markDelete(3)">🗑</button>
+        </div>
+      </div>
+
+      <div class="group-header">昨天</div>
+
+      <div class="card-wrapper" data-type="food" data-date="yesterday" data-search="瑞幸咖啡 A-356 写字楼1层">
+        <div class="card-inner" id="card-4">
+          <div class="card-stripe food"></div>
+          <div class="card-body">
+            <div class="card-code">A-356</div>
+            <div class="card-meta">瑞幸咖啡 · 18:20</div>
+            <div class="card-addr">写字楼1层大堂</div>
+          </div>
+          <div class="card-type-badge food">取餐</div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" onclick="markDone(4)">✓</button>
+          <button class="swipe-btn delete" onclick="markDelete(4)">🗑</button>
+        </div>
+      </div>
+
+      <div class="card-wrapper" data-type="parcel" data-date="yesterday" data-search="蜂巢 88-666">
+        <div class="card-inner" id="card-5">
+          <div class="card-stripe parcel"></div>
+          <div class="card-body">
+            <div class="card-code">88-666</div>
+            <div class="card-meta">蜂巢 · 14:10</div>
+            <div class="card-addr">小区3号楼快递柜</div>
+          </div>
+          <div class="card-type-badge parcel">取件</div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" onclick="markDone(5)">✓</button>
+          <button class="swipe-btn delete" onclick="markDelete(5)">🗑</button>
+        </div>
+      </div>
+
+      <div class="group-header">更早</div>
+
+      <div class="card-wrapper" data-type="food" data-date="older" data-search="星巴克 B-789">
+        <div class="card-inner" id="card-6">
+          <div class="card-stripe food"></div>
+          <div class="card-body">
+            <div class="card-code">B-789</div>
+            <div class="card-meta">星巴克 · 08-03 16:40</div>
+          </div>
+          <div class="card-type-badge food">取餐</div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" onclick="markDone(6)">✓</button>
+          <button class="swipe-btn delete" onclick="markDelete(6)">🗑</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════ TRASH ══════ -->
+    <div id="trashContent" style="display:none;">
+      <div class="trash-actions-bar">
+        <button class="btn btn-outline" onclick="restoreAll()">全部恢复</button>
+        <button class="btn btn-danger" onclick="clearTrash()">全部清空</button>
+      </div>
+
+      <div class="card-wrapper trash-card" data-type="food" data-date="yesterday">
+        <div class="card-inner" style="opacity:0.7;">
+          <div class="card-stripe food" style="opacity:0.4;"></div>
+          <div class="card-body">
+            <div class="card-code">5-1-2234</div>
+            <div class="card-meta">饿了么 · 08-05 19:00</div>
+            <div class="trash-progress"><div class="trash-progress-bar" style="width:77%;"></div></div>
+            <div class="trash-remain">剩余 18小时32分</div>
+          </div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" style="background:var(--green);" onclick="restoreItem(1)">↩</button>
+          <button class="swipe-btn delete" onclick="permaDelete(1)">🗑</button>
+        </div>
+      </div>
+
+      <div class="card-wrapper trash-card" data-type="food" data-date="yesterday">
+        <div class="card-inner" style="opacity:0.7;">
+          <div class="card-stripe food" style="opacity:0.4;"></div>
+          <div class="card-body">
+            <div class="card-code">C-112</div>
+            <div class="card-meta">喜茶 · 08-05 15:20</div>
+            <div class="trash-progress"><div class="trash-progress-bar" style="width:62%;"></div></div>
+            <div class="trash-remain">剩余 14小时48分</div>
+          </div>
+        </div>
+        <div class="swipe-actions">
+          <button class="swipe-btn done" style="background:var(--green);" onclick="restoreItem(2)">↩</button>
+          <button class="swipe-btn delete" onclick="permaDelete(2)">🗑</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Empty state (hidden by default) -->
+    <div id="emptyState" style="display:none;">
+      <div class="empty-state">
+        <div class="empty-illustration">📋</div>
+        <div class="empty-title">还没有记录</div>
+        <div class="empty-desc">打开外卖/快递 App 自动识别<br>或点右下角手动输入</div>
+        <div class="empty-hint">
+          <div class="hint"><div class="hint-icon">📸</div>截图识别</div>
+          <div class="hint"><div class="hint-icon">🔗</div>分享导入</div>
+          <div class="hint"><div class="hint-icon">✏️</div>手动输入</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- FAB -->
+  <button class="fab home-hide" id="fab" onclick="showToast('手动录入')">+</button>
+
+  <!-- Toast -->
+  <div id="toast" style="position:absolute;bottom:100px;left:50%;transform:translateX(-50%);background:var(--on-surface);color:var(--surface);padding:10px 20px;border-radius:20px;font-size:14px;opacity:0;transition:opacity 0.2s;pointer-events:none;z-index:10;">已移至回收站</div>
+</div>
+
+<script>
+// ═══════════ State ═══════════
+let currentFilter = 'all';
+let searchQuery = '';
+let guideOpen = false;
+
+// ═══════════ Theme ═══════════
+function toggleTheme() {
+  document.getElementById('phone').classList.toggle('dark');
+}
+
+// ═══════════ Screen Switching ═══════════
+function switchScreen(screen) {
+  const phone = document.getElementById('phone');
+  const homeContent = document.getElementById('homeContent');
+  const trashContent = document.getElementById('trashContent');
+  const fab = document.getElementById('fab');
+  const btns = document.querySelectorAll('.ctrl-btn');
+
+  btns.forEach((b,i) => {
+    if ((i===0 && screen==='home') || (i===1 && screen==='trash')) b.classList.add('active');
+    else if (i<2) b.classList.remove('active');
+  });
+
+  if (screen === 'trash') {
+    phone.classList.add('trash-active');
+    homeContent.style.display = 'none';
+    trashContent.style.display = 'block';
+    fab.style.display = 'none';
+  } else {
+    phone.classList.remove('trash-active');
+    homeContent.style.display = 'block';
+    trashContent.style.display = 'none';
+    fab.style.display = 'flex';
+  }
+}
+
+// ═══════════ Guide Banner ═══════════
+function toggleGuide() {
+  guideOpen = !guideOpen;
+  document.getElementById('guideBanner').classList.toggle('open', guideOpen);
+  document.getElementById('guideExpand').classList.toggle('open', guideOpen);
+}
+
+// ═══════════ Filter ═══════════
+function setFilter(filter, el) {
+  currentFilter = filter;
+  document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+  applyFilters();
+}
+
+// ═══════════ Search ═══════════
+function onSearch() {
+  searchQuery = document.getElementById('searchInput').value.toLowerCase().trim();
+  const clearBtn = document.getElementById('searchClear');
+  clearBtn.classList.toggle('visible', searchQuery.length > 0);
+  applyFilters();
+}
+
+function clearSearch() {
+  document.getElementById('searchInput').value = '';
+  searchQuery = '';
+  document.getElementById('searchClear').classList.remove('visible');
+  applyFilters();
+}
+
+function applyFilters() {
+  const cards = document.querySelectorAll('#homeContent .card-wrapper');
+  let visible = 0;
+  let lastDate = null;
+
+  cards.forEach((card, i) => {
+    const type = card.dataset.type;
+    const searchText = card.dataset.search || '';
+    const date = card.dataset.date;
+
+    const typeMatch = currentFilter === 'all' || type === currentFilter;
+    const searchMatch = !searchQuery || searchText.includes(searchQuery);
+    const show = typeMatch && searchMatch;
+
+    card.style.display = show ? '' : 'none';
+    if (show) visible++;
+
+    // Show/hide group headers
+    if (show && date !== lastDate) {
+      lastDate = date;
+    }
+  });
+
+  // Update group headers visibility
+  updateGroupHeaders();
+}
+
+function updateGroupHeaders() {
+  const groups = document.querySelectorAll('#homeContent .group-header');
+  groups.forEach(g => {
+    let next = g.nextElementSibling;
+    let hasVisible = false;
+    while (next && !next.classList.contains('group-header')) {
+      if (next.classList.contains('card-wrapper') && next.style.display !== 'none') {
+        hasVisible = true;
+        break;
+      }
+      next = next.nextElementSibling;
+    }
+    g.style.display = hasVisible ? '' : 'none';
+  });
+}
+
+// ═══════════ Swipe ═══════════
+let swipeEl = null;
+let swipeStartX = 0;
+let swipeStartY = 0;
+let swipeOffset = 0;
+let swipeLocked = false;
+
+function getX(e) { return e.touches ? e.touches[0].clientX : e.clientX; }
+function getY(e) { return e.touches ? e.touches[0].clientY : e.clientY; }
+function findCard(el) { return el ? (el.closest('.card-wrapper') || null) : null; }
+
+function handleTouchStart(e) { handleStart(e); }
+function handleMouseDown(e) { handleStart(e); document.addEventListener('mousemove', handleMouseMove); document.addEventListener('mouseup', handleMouseUp); }
+
+function handleStart(e) {
+  const card = findCard(e.target);
+  if (!card) return;
+  swipeEl = card;
+  const inner = swipeEl.querySelector('.card-inner');
+  // Reset any existing swipe
+  inner.style.transition = 'none';
+  const current = parseFloat(inner.style.transform.replace('translateX(','').replace('px)','')) || 0;
+  swipeEl = card;
+  swipeStartX = getX(e);
+  swipeStartY = getY(e);
+  swipeOffset = current;
+  swipeLocked = false;
+}
+
+function handleTouchMove(e) { handleMove(e); }
+function handleMouseMove(e) {
+  if (!swipeEl) return;
+  handleMove(e);
+}
+
+function handleMove(e) {
+  if (!swipeEl) return;
+  const dx = getX(e) - swipeStartX;
+  const dy = Math.abs(getY(e) - swipeStartY);
+
+  // Lock to horizontal after 10px
+  if (!swipeLocked && Math.abs(dx) > 10) swipeLocked = true;
+  if (!swipeLocked && dy > 10) { swipeEl = null; return; }
+
+  const inner = swipeEl.querySelector('.card-inner');
+  let newX = swipeOffset + dx;
+  // Only allow left swipe
+  if (newX > 0) newX = 0;
+  if (newX < -130) newX = -130;
+  inner.style.transform = `translateX(${newX}px)`;
+}
+
+function handleTouchEnd(e) { handleEnd(); }
+function handleMouseUp(e) {
+  if (!swipeEl) { document.removeEventListener('mousemove', handleMouseMove); document.removeEventListener('mouseup', handleMouseUp); return; }
+  handleEnd();
+  document.removeEventListener('mousemove', handleMouseMove);
+  document.removeEventListener('mouseup', handleMouseUp);
+}
+
+function handleEnd() {
+  if (!swipeEl) return;
+  const inner = swipeEl.querySelector('.card-inner');
+  inner.style.transition = 'transform 250ms cubic-bezier(0.22, 1, 0.36, 1)';
+  const current = parseFloat(inner.style.transform.replace('translateX(','').replace('px)','')) || 0;
+
+  if (current < -60) {
+    inner.style.transform = 'translateX(-120px)';
+    inner.classList.add('swiped');
+  } else {
+    inner.style.transform = 'translateX(0px)';
+    inner.classList.remove('swiped');
+  }
+  swipeEl = null;
+}
+
+// ═══════════ Actions ═══════════
+function markDone(id) {
+  showToast('已标记为完成');
+  animateRemove(id);
+}
+function markDelete(id) {
+  showToast('已移至回收站');
+  animateRemove(id);
+}
+function restoreItem(id) { showToast('已恢复'); }
+function permaDelete(id) { showToast('已彻底删除'); }
+function restoreAll() { showToast('已全部恢复'); }
+function clearTrash() { showToast('已全部清空'); }
+
+function animateRemove(id) {
+  const card = document.getElementById('card-'+id).closest('.card-wrapper');
+  if (!card) return;
+  card.style.transition = 'opacity 0.25s, transform 0.25s';
+  card.style.opacity = '0';
+  card.style.transform = 'translateX(-30px)';
+  setTimeout(() => card.remove(), 260);
+}
+
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.style.opacity = '1';
+  clearTimeout(t._timeout);
+  t._timeout = setTimeout(() => t.style.opacity = '0', 1800);
+}
+
+// ═══════════ Init ═══════════
+document.getElementById('searchInput').addEventListener('keydown', e => {
+  if (e.key === 'Escape') clearSearch();
+});
+</script>
+</body>
+</html>

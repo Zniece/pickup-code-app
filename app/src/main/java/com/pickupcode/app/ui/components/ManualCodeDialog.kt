@@ -7,6 +7,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.extractor.CodeValidator
+import com.pickupcode.app.ui.theme.TypeFood
+import com.pickupcode.app.ui.theme.TypeParcel
 
 /**
  * 手动输入取餐码/取件码的对话框
@@ -30,12 +32,28 @@ fun ManualCodeDialog(
                     FilterChip(
                         selected = codeType == "pickup_food",
                         onClick = { codeType = "pickup_food" },
-                        label = { Text("取餐码") }
+                        label = { Text("取餐码") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            selectedContainerColor = TypeFood, // 取餐蓝
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     )
                     FilterChip(
                         selected = codeType == "pickup_parcel",
                         onClick = { codeType = "pickup_parcel" },
-                        label = { Text("取件码") }
+                        label = { Text("取件码") },
+                        colors = FilterChipDefaults.filterChipColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            labelColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            selectedContainerColor = TypeParcel, // 取件紫
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            iconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                            selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+                        )
                     )
                 }
 

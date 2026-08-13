@@ -134,77 +134,69 @@ object AppPreferences {
         }
     }
 
-    suspend fun setConfidenceThreshold(context: Context, value: Float) {
-        context.dataStore.edit { it[KEY_CONFIDENCE_THRESHOLD] = value }
+    // ── 泛化写入：消除 18 个重复的 dataStore.edit 样板 ──
+    private suspend fun <T> write(context: Context, key: Preferences.Key<T>, value: T) {
+        context.dataStore.edit { it[key] = value }
     }
 
-    suspend fun setEnableFood(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_FOOD] = value }
+    /** 加密字符串写入（API Key 类）。 */
+    private suspend fun writeEncrypted(context: Context, key: Preferences.Key<String>, value: String) {
+        context.dataStore.edit { it[key] = encrypt(value) }
     }
 
-    suspend fun setEnableParcel(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_PARCEL] = value }
-    }
+    suspend fun setConfidenceThreshold(context: Context, value: Float) =
+        write(context, KEY_CONFIDENCE_THRESHOLD, value)
 
-    suspend fun setEnableCoupon(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_COUPON] = value }
-    }
+    suspend fun setEnableFood(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_FOOD, value)
 
-    suspend fun setDarkMode(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_DARK_MODE] = value }
-    }
+    suspend fun setEnableParcel(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_PARCEL, value)
 
-    suspend fun setApiKey(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_API_KEY] = encrypt(value) }
-    }
+    suspend fun setEnableCoupon(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_COUPON, value)
 
-    suspend fun setApiBaseUrl(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_API_BASE_URL] = value }
-    }
+    suspend fun setDarkMode(context: Context, value: String) =
+        write(context, KEY_DARK_MODE, value)
 
-    suspend fun setApiModel(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_API_MODEL] = value }
-    }
+    suspend fun setApiKey(context: Context, value: String) =
+        writeEncrypted(context, KEY_API_KEY, value)
 
-    suspend fun setEnableAI(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_AI] = value }
-    }
+    suspend fun setApiBaseUrl(context: Context, value: String) =
+        write(context, KEY_API_BASE_URL, value)
 
-    suspend fun setEnableIntentReceive(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_INTENT_RECEIVE] = value }
-    }
+    suspend fun setApiModel(context: Context, value: String) =
+        write(context, KEY_API_MODEL, value)
 
-    suspend fun setEnableShareDetection(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_SHARE_DETECTION] = value }
-    }
+    suspend fun setEnableAI(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_AI, value)
 
-    suspend fun setEnableMapVerify(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_MAP_VERIFY] = value }
-    }
+    suspend fun setEnableIntentReceive(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_INTENT_RECEIVE, value)
 
-    suspend fun setAmapApiKey(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_AMAP_API_KEY] = encrypt(value) }
-    }
+    suspend fun setEnableShareDetection(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_SHARE_DETECTION, value)
 
-    suspend fun setEnableKuaidi100(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_KUAIDI100] = value }
-    }
+    suspend fun setEnableMapVerify(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_MAP_VERIFY, value)
 
-    suspend fun setKuaidi100Key(context: Context, value: String) {
-        context.dataStore.edit { it[KEY_KUAIDI100_KEY] = encrypt(value) }
-    }
+    suspend fun setAmapApiKey(context: Context, value: String) =
+        writeEncrypted(context, KEY_AMAP_API_KEY, value)
 
-    suspend fun setHideAccessibilityCard(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_HIDE_ACCESSIBILITY_CARD] = value }
-    }
+    suspend fun setEnableKuaidi100(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_KUAIDI100, value)
 
-    suspend fun setHideGuideCard(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_HIDE_GUIDE_CARD] = value }
-    }
+    suspend fun setKuaidi100Key(context: Context, value: String) =
+        writeEncrypted(context, KEY_KUAIDI100_KEY, value)
 
-    suspend fun setEnableSmsReceive(context: Context, value: Boolean) {
-        context.dataStore.edit { it[KEY_ENABLE_SMS_RECEIVE] = value }
-    }
+    suspend fun setHideAccessibilityCard(context: Context, value: Boolean) =
+        write(context, KEY_HIDE_ACCESSIBILITY_CARD, value)
+
+    suspend fun setHideGuideCard(context: Context, value: Boolean) =
+        write(context, KEY_HIDE_GUIDE_CARD, value)
+
+    suspend fun setEnableSmsReceive(context: Context, value: Boolean) =
+        write(context, KEY_ENABLE_SMS_RECEIVE, value)
 
     // ---------------------------------------------------------------
     // B6: API Key 加密（AndroidKeyStore AES-GCM，密文存 DataStore）

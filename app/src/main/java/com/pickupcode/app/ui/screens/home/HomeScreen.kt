@@ -293,6 +293,14 @@ fun HomeScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text("·通过无障碍服务调用OCR识别", style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(10.dp))
+                                Button(
+                                    onClick = onHideGuideCard,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text("我知道了")
+                                }
                             }
                         }
                     }
@@ -357,89 +365,14 @@ fun HomeScreen(
                             }
                         }
                     } else {
-                        // 全新空状态：三个引导入口卡片
-                        Column(
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        // 无记录占位
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp, horizontal = 16.dp),
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                "欢迎使用一键闪记",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(bottom = 4.dp)
-                            )
-                            Text(
-                                "选择一种方式开始记录取件码",
+                            Text("暂无记录",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(bottom = 8.dp)
-                            )
-
-                            // 方式一：无障碍自动识别
-                            Card(
-                                modifier = Modifier.fillMaxWidth().clickable { onEnableAccessibility() },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("🔧", fontSize = 28.sp)
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text("开启无障碍自动识别",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold)
-                                        Text("打开控制面板一键自动识别取件码",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-
-                            // 方式二：从截图/分享导入
-                            Card(
-                                modifier = Modifier.fillMaxWidth().clickable { onFabClick() },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("📸", fontSize = 28.sp)
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text("从截图/分享导入",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold)
-                                        Text("从其他App分享文本或截图识别",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
-
-                            // 方式三：手动输入
-                            Card(
-                                modifier = Modifier.fillMaxWidth().clickable { onFabClick() },
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text("⌨️", fontSize = 28.sp)
-                                    Spacer(Modifier.width(12.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text("手动输入取件码",
-                                            style = MaterialTheme.typography.titleSmall,
-                                            fontWeight = FontWeight.SemiBold)
-                                        Text("直接输入或粘贴取件码文字",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                    Text("→", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                }
-                            }
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
