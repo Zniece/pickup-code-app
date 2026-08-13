@@ -482,7 +482,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             // M12: 结果提示用独立保留 id 段，避免与 CodeNotificationManager.safeId 空间冲突
             nm.notify(RESULT_NOTIFY_ID, NotificationCompat.Builder(this, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.ic_dialog_info)
-                .setContentTitle("一键闪记").setContentText(msg)
+                .setContentTitle("码上闪记").setContentText(msg)
                 .setAutoCancel(true).setTimeoutAfter(3000).build())
         }
     }

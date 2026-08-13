@@ -158,7 +158,7 @@ fun HomeScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("一键闪记", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+                    Text("码上闪记", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 },
                 actions = {
                     IconButton(onClick = onStatsClick) {
@@ -243,7 +243,7 @@ fun HomeScreen(
                                 }
                             }
                             if (isAccessibilityEnabled) {
-                                Text("打开控制面板 → 点✏️编辑 → 找到「一键闪记」→ 拖到面板",
+                                Text("打开控制面板 → 点✏️编辑 → 找到「码上闪记」→ 拖到面板",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Spacer(Modifier.height(4.dp))

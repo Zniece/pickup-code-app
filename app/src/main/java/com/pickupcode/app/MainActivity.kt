@@ -240,7 +240,7 @@ class MainActivity : ComponentActivity() {
     private fun openAccessibilitySettings() {
         try {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            Toast.makeText(this, "在列表中找到「一键闪记」并开启", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "在列表中找到「码上闪记」并开启", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "无法打开无障碍设置", Toast.LENGTH_SHORT).show()
         }

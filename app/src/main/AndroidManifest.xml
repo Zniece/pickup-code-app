@@ -10,7 +10,7 @@
         android:name=".App"
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
-        android:label="一键闪记"
+        android:label="码上闪记"
         android:supportsRtl="true"
         android:theme="@style/Theme.PickupCode">
 
@@ -82,7 +82,7 @@
             android:name=".service.PickupCodeTileService"
             android:exported="true"
             android:icon="@drawable/ic_tile_pickup"
-            android:label="一键闪记"
+            android:label="码上闪记"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />

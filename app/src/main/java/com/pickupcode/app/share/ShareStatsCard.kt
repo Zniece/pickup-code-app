@@ -71,7 +71,7 @@ object ShareStatsCard {
         paint.color = Color.WHITE
         paint.textSize = 64f
         paint.isFakeBoldText = true
-        c.drawText("一键闪记 · 识别成绩单", 110f, 150f, paint)
+        c.drawText("码上闪记 · 识别成绩单", 110f, 150f, paint)
         paint.textSize = 36f
         paint.isFakeBoldText = false
         c.drawText("取件码 / 取餐码 · 认得准、越用越懂", 110f, 220f, paint)

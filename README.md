@@ -3,7 +3,13 @@
 自动识别截屏或分享图片中的取餐码，取件码和券码，通知提醒 + 一键标记已取。
 
 <div align="center">
-
+  <img src="screenshots/Screenshot_20260813_163603.jpg" width="30%" alt="截图 1" />
+  <img src="screenshots/Screenshot_20260813_163606.jpg" width="30%" alt="截图 2" />
+  <img src="screenshots/Screenshot_20260813_164743.jpg" width="30%" alt="截图 3" />
+  <img src="screenshots/Screenshot_20260813_165152.jpg" width="30%" alt="截图 4" />
+  <img src="screenshots/Screenshot_20260813_165244.jpg" width="30%" alt="截图 5" />
+  <img src="screenshots/Screenshot_20260813_165248.jpg" width="30%" alt="截图 6" />
+  <img src="screenshots/Screenshot_20260813_165252.jpg" width="30%" alt="截图 7" />
 </div>
 
 ## 功能
@@ -40,11 +46,11 @@
 ## 快速开始
 
 1. 下载 APK 安装
-2. 开启无障碍服务（设置 → 无障碍 → 一键闪记）
-3. 把磁贴加到控制面板（下拉 → ✏️ → 找到「一键闪记」）
+2. 开启无障碍服务（设置 → 无障碍 → 码上闪记）
+3. 把磁贴加到控制面板（下拉 → ✏️ → 找到「码上闪记」）
 4. 方式一：打开外卖/快递 App → 点磁贴 → 自动识别
-5. 方式二：截图 → 分享菜单 → 选择「一键闪记」
-6. 方式三：在软件中分享图片 → 一键闪记 → 自动识别（仅支持分享图片）
+5. 方式二：截图 → 分享菜单 → 选择「码上闪记」
+6. 方式三：在软件中分享图片 → 码上闪记 → 自动识别（仅支持分享图片）
 
 ## 技术栈
 

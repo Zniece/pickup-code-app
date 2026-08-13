@@ -451,7 +451,7 @@ private fun AppearanceSection(sc: SettingsCtx) {
 private fun AboutSection(sc: SettingsCtx) {
     SettingsSectionCard(title = "关于") {
         Column {
-            Text("一键闪记 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
+            Text("码上闪记 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
             Text("基于 ML Kit OCR · 数据仅存储在本地",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
