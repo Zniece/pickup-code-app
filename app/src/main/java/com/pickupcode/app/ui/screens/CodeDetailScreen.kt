@@ -27,6 +27,7 @@ import android.graphics.BitmapFactory
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.extractor.CodeValidator
+import com.pickupcode.app.learner.CommonStationStore
 import com.pickupcode.app.learner.PatternLearner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -171,8 +172,8 @@ fun CodeDetailScreen(
                     })
 
                 // C2: 常用取件点提示（IO 线程查，避免组合期主线程解析 JSON）
-                val freqPoint by produceState<PatternLearner.PickupPoint?>(null, item.pickupAddress) {
-                    value = withContext(Dispatchers.IO) { PatternLearner.isFrequentPickupPoint(ctx, item.pickupAddress) }
+                val freqPoint by produceState<CommonStationStore.PickupPoint?>(null, item.pickupAddress) {
+                    value = withContext(Dispatchers.IO) { CommonStationStore.isFrequentPickupPoint(ctx, item.pickupAddress) }
                 }
                 val freq = freqPoint  // 捕获局部值，便于智能转换
                 if (freq != null) {
@@ -308,7 +309,7 @@ fun CodeDetailScreen(
                         confirmAll()
                         // C2: 标记已取时把取件地址登记为常用取件点（IO 线程写盘，避免主线程同步 IO）
                         if (item.pickupAddress.isNotBlank()) {
-                            scope.launch(Dispatchers.IO) { PatternLearner.registerPickupPoint(ctx, item.pickupAddress) }
+                            scope.launch(Dispatchers.IO) { CommonStationStore.registerPickupPoint(ctx, item.pickupAddress) }
                         }
                         onMarkDone(item.id)
                     }, modifier = Modifier.fillMaxWidth(),

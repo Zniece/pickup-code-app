@@ -63,9 +63,9 @@ object RecognitionPipeline {
             seen.add(key)
             val source = codeSources[code] ?: "unknown"
 
-            // 逐码窗口地址；取不到回退全屏地址
+            // 逐码窗口地址；竞争仲裁：窗口优先，全屏仅高置信来源采信（防多通知串台）
             val perCodeAddr = AddressExtractor.extractAddressForCode(lines, code)
-            val effAddr = perCodeAddr.ifBlank { fullAddress }
+            val effAddr = AddressExtractor.resolveAddress(lines, allText, perCodeAddr, fullAddress)
             // 独立柜号（仅取件码）
             val cabinet = if (type == CodeExtractor.CodeType.pickup_parcel)
                 AddressExtractor.extractCabinetNumber(lines, allText) else ""

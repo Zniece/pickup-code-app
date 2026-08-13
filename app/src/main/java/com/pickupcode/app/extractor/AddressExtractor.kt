@@ -13,7 +13,8 @@ object AddressExtractor {
         val stationName: String,
         val stationType: StationType,
         val cabinetNumber: String?,
-        val fullAddress: String
+        val fullAddress: String,
+        val addrFrom: String = "none"  // 命中步骤来源（竞争仲裁用；12 个来源值）
     )
 
     // 地址指示符（isAddressLike 核心判断）：合并同类产品 extractAddress 的 30+ 地标词表，
@@ -606,7 +607,8 @@ object AddressExtractor {
         stationName = st.stationName.ifEmpty { "未知站点" },
         stationType = stype,
         cabinetNumber = st.cabinet,
-        fullAddress = st.fullAddress
+        fullAddress = st.fullAddress,
+        addrFrom = st.addrFrom
     )
     }
 
@@ -702,6 +704,38 @@ object AddressExtractor {
     /** Backward-compatible: return address string from structured location. */
     fun extractAddress(lines: List<OCREngine.TextLine>, allText: String): String {
         return extractLocation(lines, allText).fullAddress
+    }
+
+    // ---------------------------------------------------------------
+    // 竞争仲裁（渐进版，2026-08-13）：窗口地址优先；全屏地址仅高置信来源采信
+    // 背景：步骤制"先到先得"的结构性弱点——S7/S8/S9/S10 几何兜底可能在多通知
+    // 同屏时抓到别的通知的地址（串台）。复审规则：码窗口内的地址无条件优先；
+    // 窗口无地址时，全屏结果只有来自「文本证据型」步骤（S0/S0b/S0c/S2/S5/S6/
+    // S-Coupon）才采信，几何兜底型（S7/S8/S9/S10）在多码同屏时宁缺毋滥。
+    // ---------------------------------------------------------------
+
+    /** 文本证据型步骤（标签/句式直接写明地址）——高置信，全屏采信。 */
+    private val HIGH_CONFIDENCE_SOURCES = setOf(
+        "SCoupon-store", "S0-label", "S0b-addrLabel", "S0c-column",
+        "S2-pipe", "S5-placed", "S6a", "S6b"
+    )
+
+    /**
+     * 竞争仲裁：合并窗口地址与全屏地址。
+     * @param perCodeAddr [extractAddressForCode] 的窗口定位结果（可能为空）
+     * @param fullAddress 全屏 [extractLocation] 的兜底结果（可能为空）
+     * @return 最终地址；窗口地址优先，全屏仅高置信来源采信
+     */
+    fun resolveAddress(
+        lines: List<OCREngine.TextLine>,
+        allText: String,
+        perCodeAddr: String,
+        fullAddress: String
+    ): String {
+        if (perCodeAddr.isNotBlank()) return perCodeAddr
+        if (fullAddress.isBlank()) return ""
+        val loc = extractLocation(lines, allText)
+        return if (loc.addrFrom in HIGH_CONFIDENCE_SOURCES) fullAddress else ""
     }
 
     /** 增强版：context 非空时优先匹配用户常用站点（参考同类产品实现 setCommonStations）。 */

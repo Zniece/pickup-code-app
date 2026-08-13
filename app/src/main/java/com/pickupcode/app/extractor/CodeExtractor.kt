@@ -165,8 +165,8 @@ object CodeExtractor {
     // ---------------------------------------------------------------
 
     fun extract(lines: List<OCREngine.TextLine>, screenHeight: Int = 0, context: Context? = null, source: String = "screen"): List<ExtractedCode> {
-        // 文本预处理：全角→半角归一化（参考同类产品实现 normalizeText）
-        val lines = lines.map { it.copy(text = normalizeText(it.text)) }
+        // 文本预处理：全角→半角归一化 + 词级纠错表（参考同类产品实现 normalizeText / textCorrections）
+        val lines = lines.map { it.copy(text = OcrCorrections.apply(normalizeText(it.text))) }
         val candidates = mutableListOf<Candidate>()
         val allText = lines.joinToString(" ") { it.text }
         val isFoodContext = FOOD_KEYWORDS.any { allText.contains(it, ignoreCase = true) }

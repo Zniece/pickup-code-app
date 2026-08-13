@@ -65,118 +65,6 @@ object PatternLearner {
     // Public API
     // ---------------------------------------------------------------
 
-    // ---------------------------------------------------------------
-    // B2: 每日命中率统计（stats_log.json，供命中率曲线）
-    // ---------------------------------------------------------------
-
-    private const val KEY_DAY_STATS = "day_stats"
-    private const val MAX_DAY_STATS = 30
-
-    private fun todayKey(): String {
-        val fmt = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
-        return fmt.format(java.util.Date())
-    }
-
-    /** 记录当天的 {total, hits, misses}，供命中率曲线。 */
-    private fun recordDay(context: Context, isHit: Boolean, isMiss: Boolean) {
-        // M10: 加锁防并发 read-modify-write 丢计数（识别路径虽多串行，但多入口仍可能有并发写）
-        synchronized(dayStatsLock) {
-            val key = todayKey()
-            val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DAY_STATS, null)
-            val map = linkedMapOf<String, JSONObject>()
-            if (json != null) {
-                try {
-                    val arr = JSONArray(json)
-                    for (i in 0 until arr.length()) {
-                        val o = arr.getJSONObject(i)
-                        map[o.optString("date")] = o
-                    }
-                } catch (e: Exception) { Log.w("PatternLearner", "日统计数据JSON损坏，已重置", e) }
-            }
-            val today = map[key] ?: JSONObject().apply { put("date", key); put("total", 0); put("hits", 0); put("misses", 0) }
-            today.put("total", today.optInt("total") + 1)
-            if (isHit) today.put("hits", today.optInt("hits") + 1)
-            if (isMiss) today.put("misses", today.optInt("misses") + 1)
-            map[key] = today
-            // 只保留最近 MAX_DAY_STATS 天
-            val sorted = map.values.sortedBy { it.optString("date") }.takeLast(MAX_DAY_STATS)
-            val out = JSONArray()
-            for (o in sorted) out.put(o)
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(KEY_DAY_STATS, out.toString()).apply()
-        }
-    }
-
-    private val dayStatsLock = Any()
-
-    /** 每日命中率序列：按日期升序的 {date, total, hits, misses}。 */
-    data class DayStat(val date: String, val total: Int, val hits: Int, val misses: Int)
-    fun getDailyStats(context: Context): List<DayStat> {
-        val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DAY_STATS, null)
-            ?: return emptyList()
-        return try {
-            val arr = JSONArray(json)
-            (0 until arr.length()).map {
-                val o = arr.getJSONObject(it)
-                DayStat(o.optString("date"), o.optInt("total"), o.optInt("hits"), o.optInt("misses"))
-            }
-        } catch (_: Exception) { emptyList() }
-    }
-
-    // ---------------------------------------------------------------
-    // C2: 常用取件点归并（pickup_points.json）
-    // ---------------------------------------------------------------
-
-    private const val KEY_PICKUP_POINTS = "pickup_points"
-    private const val MAX_PICKUP_POINTS = 50
-
-    data class PickupPoint(val name: String, val count: Int, val lastUsedAt: Long)
-
-    /** 记录一次取件地址出现（识别/标记已取时调用），用于归并"常用取件点"。 */
-    // B13: read-modify-write 需原子化——识别线程与详情页「标记已取」可并发调用，无锁会丢失计数
-    @Synchronized
-    fun registerPickupPoint(context: Context, address: String) {
-        if (address.isBlank()) return
-        val key = address.trim()
-        val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PICKUP_POINTS, null)
-        val map = linkedMapOf<String, PickupPoint>()
-        if (json != null) {
-            try {
-                val arr = JSONArray(json)
-                for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    map[o.optString("address")] = PickupPoint(o.optString("name"), o.optInt("count"), o.optLong("last", 0L))
-                }
-            } catch (e: Exception) { Log.w("PatternLearner", "常用取件点JSON损坏，已重置", e) }
-        }
-        val prev = map[key]
-        map[key] = PickupPoint(key, (prev?.count ?: 0) + 1, System.currentTimeMillis())
-        val sorted = map.entries.sortedByDescending { it.value.count }.take(MAX_PICKUP_POINTS)
-        val out = JSONArray()
-        for ((addr, p) in sorted) {
-            out.put(JSONObject().apply { put("address", addr); put("name", p.name); put("count", p.count); put("last", p.lastUsedAt) })
-        }
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putString(KEY_PICKUP_POINTS, out.toString()).apply()
-    }
-
-    /** 该地址是否已是常用取件点（出现 >= 2 次）。返回 null 表示不是。 */
-    fun isFrequentPickupPoint(context: Context, address: String): PickupPoint? {
-        if (address.isBlank()) return null
-        val json = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_PICKUP_POINTS, null)
-            ?: return null
-        return try {
-            val arr = JSONArray(json)
-            for (i in 0 until arr.length()) {
-                val o = arr.getJSONObject(i)
-                if (o.optString("address") == address.trim() && o.optInt("count") >= 2) {
-                    return PickupPoint(o.optString("name"), o.optInt("count"), o.optLong("last", 0L))
-                }
-            }
-            null
-        } catch (_: Exception) { null }
-    }
-
     /** Record that the extractor matched a code using this pattern.
      *  This is NOT a correctness signal — just pattern usage tracking.
      *  H7: 计数器 read-modify-write 加 @Synchronized（与 M10/B13 同模式），防并发 getInt+putInt 丢计数。 */
@@ -188,7 +76,7 @@ object PatternLearner {
             .putInt(KEY_ATTEMPTS, prefs.getInt(KEY_ATTEMPTS, 0) + 1)
             .putInt(KEY_PAT_PREFIX + patternId, prefs.getInt(KEY_PAT_PREFIX + patternId, 0) + 1)
             .apply()
-        recordDay(context, isHit = true, isMiss = false)
+        DailyStats.recordDay(context, isHit = true, isMiss = false)
     }
 
     /** Record that the extractor found nothing in the OCR output.
@@ -201,7 +89,7 @@ object PatternLearner {
                 .putInt(KEY_TOTAL, prefs.getInt(KEY_TOTAL, 0) + 1)
                 .putInt(KEY_MISSES, prefs.getInt(KEY_MISSES, 0) + 1)
                 .apply()
-            recordDay(context, isHit = false, isMiss = true)
+            DailyStats.recordDay(context, isHit = false, isMiss = true)
             appendUnmatched(context, rawText, source)
         }
         // 低频节流触发：放在 synchronized 块外，避免持锁期间做 IO

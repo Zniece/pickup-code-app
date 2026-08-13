@@ -1,7 +1,9 @@
 package com.pickupcode.app.learner
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * 常用站点缓存（参考同类产品的常用站点缓存机制 setCommonStations）。
@@ -109,5 +111,63 @@ object CommonStationStore {
         } catch (_: Exception) {
             emptyMap()
         }
+    }
+
+    // ---------------------------------------------------------------
+    // C2: 常用取件点归并（自 PatternLearner 迁入，2026-08-13）
+    // 存储沿用 PatternLearner 的 PREFS 文件 "pattern_learner"，保证迁移数据不丢。
+    // 与上方的站点缓存（recordCode/getCommonStations，按站名聚合）并存：
+    // 本段按「完整地址」聚合（用户级常用地址），上方按「站名」聚合（识别级优先匹配）——语义不同，勿合并。
+    // ---------------------------------------------------------------
+
+    private const val PICKUP_PREFS = "pattern_learner"
+    private const val KEY_PICKUP_POINTS = "pickup_points"
+    private const val MAX_PICKUP_POINTS = 50
+
+    data class PickupPoint(val name: String, val count: Int, val lastUsedAt: Long)
+
+    /** 记录一次取件地址出现（识别/标记已取时调用），用于归并"常用取件点"。 */
+    // B13: read-modify-write 需原子化——识别线程与详情页「标记已取」可并发调用，无锁会丢失计数
+    @Synchronized
+    fun registerPickupPoint(context: Context, address: String) {
+        if (address.isBlank()) return
+        val key = address.trim()
+        val json = context.getSharedPreferences(PICKUP_PREFS, Context.MODE_PRIVATE).getString(KEY_PICKUP_POINTS, null)
+        val map = linkedMapOf<String, PickupPoint>()
+        if (json != null) {
+            try {
+                val arr = JSONArray(json)
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    map[o.optString("address")] = PickupPoint(o.optString("name"), o.optInt("count"), o.optLong("last", 0L))
+                }
+            } catch (e: Exception) { Log.w("CommonStationStore", "常用取件点JSON损坏，已重置", e) }
+        }
+        val prev = map[key]
+        map[key] = PickupPoint(key, (prev?.count ?: 0) + 1, System.currentTimeMillis())
+        val sorted = map.entries.sortedByDescending { it.value.count }.take(MAX_PICKUP_POINTS)
+        val out = JSONArray()
+        for ((addr, p) in sorted) {
+            out.put(JSONObject().apply { put("address", addr); put("name", p.name); put("count", p.count); put("last", p.lastUsedAt) })
+        }
+        context.getSharedPreferences(PICKUP_PREFS, Context.MODE_PRIVATE)
+            .edit().putString(KEY_PICKUP_POINTS, out.toString()).apply()
+    }
+
+    /** 该地址是否已是常用取件点（出现 >= 2 次）。返回 null 表示不是。 */
+    fun isFrequentPickupPoint(context: Context, address: String): PickupPoint? {
+        if (address.isBlank()) return null
+        val json = context.getSharedPreferences(PICKUP_PREFS, Context.MODE_PRIVATE).getString(KEY_PICKUP_POINTS, null)
+            ?: return null
+        return try {
+            val arr = JSONArray(json)
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                if (o.optString("address") == address.trim() && o.optInt("count") >= 2) {
+                    return PickupPoint(o.optString("name"), o.optInt("count"), o.optLong("last", 0L))
+                }
+            }
+            null
+        } catch (_: Exception) { null }
     }
 }

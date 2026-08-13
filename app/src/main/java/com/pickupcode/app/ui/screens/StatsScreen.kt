@@ -17,6 +17,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.pickupcode.app.learner.DailyStats
 import com.pickupcode.app.learner.PatternLearner
 import com.pickupcode.app.learner.PatternLearner.PatternSuggestion
 import com.pickupcode.app.learner.PatternLearner.PatternStats
@@ -32,7 +33,7 @@ fun StatsScreen(onBack: () -> Unit) {
     var stats by remember { mutableStateOf<PatternStats?>(null) }
     var suggestions by remember { mutableStateOf<List<PatternSuggestion>>(emptyList()) }
     var learnedRules by remember { mutableStateOf<List<PatternLearner.LearnedRule>>(emptyList()) }
-    var dailyStats by remember { mutableStateOf<List<PatternLearner.DayStat>>(emptyList()) }
+    var dailyStats by remember { mutableStateOf<List<DailyStats.DayStat>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
 
     fun reloadLearned() {
@@ -43,7 +44,7 @@ fun StatsScreen(onBack: () -> Unit) {
 
     fun reloadDaily() {
         scope.launch {
-            dailyStats = withContext(Dispatchers.IO) { PatternLearner.getDailyStats(context) }
+            dailyStats = withContext(Dispatchers.IO) { DailyStats.getDailyStats(context) }
         }
     }
 
@@ -52,7 +53,7 @@ fun StatsScreen(onBack: () -> Unit) {
             stats = withContext(Dispatchers.IO) { PatternLearner.getStats(context) }
             suggestions = withContext(Dispatchers.IO) { PatternLearner.getSuggestions(context) }
             learnedRules = withContext(Dispatchers.IO) { PatternLearner.getLearnedPatterns(context) }
-            dailyStats = withContext(Dispatchers.IO) { PatternLearner.getDailyStats(context) }
+            dailyStats = withContext(Dispatchers.IO) { DailyStats.getDailyStats(context) }
             // Trigger auto-apply on view
             withContext(Dispatchers.IO) { PatternLearner.autoApply(context) }
         } catch (e: Exception) {
@@ -308,7 +309,7 @@ private fun EmptyStateMessage() {
 
 /** B2: 命中率曲线卡片（Compose Canvas 手写折线图，不引第三方图表库）。 */
 @Composable
-private fun HitRateCard(stats: List<PatternLearner.DayStat>) {
+private fun HitRateCard(stats: List<DailyStats.DayStat>) {
     Card(
         Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
