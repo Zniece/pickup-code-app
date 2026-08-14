@@ -51,6 +51,11 @@ object CodeNotificationManager {
     private fun safeId(type: CodeExtractor.CodeType, code: String): Int =
         ("$type:$code".hashCode() and 0x7fffffff)
 
+    /** 提醒闹钟请求码：按 kind 分到不同段位，避免同码「稍后提醒」与「到期提醒」共用请求码互相覆盖。
+     *  later → [0x20000000, 0x5fffffff]，expiry → [0x40000000, 0x7fffffff]，两段互斥。 */
+    private fun remindRequestCode(type: CodeExtractor.CodeType, code: String, kind: String): Int =
+        (safeId(type, code) and 0x3fffffff) or (if (kind == KIND_EXPIRY) 0x40000000 else 0x20000000)
+
     private data class TypeStyle(val channelId: String, val iconLabel: String, val title: String)
 
     private fun typeStyle(type: CodeExtractor.CodeType): TypeStyle = when (type) {
@@ -152,7 +157,7 @@ object CodeNotificationManager {
             putExtra(EXTRA_REMIND_SOURCE, source)
             putExtra(EXTRA_REMIND_KIND, kind)
         }
-        val pi = PendingIntent.getBroadcast(context, safeId(type, code) and 0x7fffffff, intent,
+        val pi = PendingIntent.getBroadcast(context, remindRequestCode(type, code, kind), intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val triggerAt = System.currentTimeMillis() + delayMs
         try {
@@ -209,14 +214,16 @@ object CodeNotificationManager {
         )
     }
 
-    /** 取消已设置的稍后提醒闹钟（用户提前取件时调用）。 */
+    /** 取消已设置的提醒闹钟（用户提前取件时调用）：later 与 expiry 两类一并取消。 */
     fun cancelRemind(context: Context, code: String, type: CodeExtractor.CodeType) {
         val alarm = context.getSystemService(AlarmManager::class.java) ?: return
         val intent = Intent(context, RemindReceiver::class.java)
-        val pi = PendingIntent.getBroadcast(context, safeId(type, code) and 0x7fffffff, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        alarm.cancel(pi)
-        pi.cancel()
+        for (kind in listOf(KIND_LATER, KIND_EXPIRY)) {
+            val pi = PendingIntent.getBroadcast(context, remindRequestCode(type, code, kind), intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            alarm.cancel(pi)
+            pi.cancel()
+        }
     }
 
     /** Show notification for a duplicate code — informs user there are now ≥2 records for this code. */

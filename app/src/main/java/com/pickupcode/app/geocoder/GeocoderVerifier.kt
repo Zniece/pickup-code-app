@@ -4,6 +4,7 @@ import android.content.Context
 import android.location.Address
 import android.location.Geocoder
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.IOException
@@ -116,6 +117,8 @@ object GeocoderVerifier {
                 confidence = confidence,
                 provider = "android"
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: IOException) {
             Log.e(TAG, "Android Geocoder error", e)
             null
@@ -204,6 +207,8 @@ object GeocoderVerifier {
             } finally {
                 conn.disconnect()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "AMap geocoder error", e)
             null

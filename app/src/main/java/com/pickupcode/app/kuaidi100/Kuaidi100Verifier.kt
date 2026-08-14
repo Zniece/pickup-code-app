@@ -2,6 +2,7 @@ package com.pickupcode.app.kuaidi100
 
 import android.util.Log
 import com.pickupcode.app.BuildConfig
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -78,6 +79,8 @@ object Kuaidi100Verifier {
             } finally {
                 conn.disconnect()
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Log.e(TAG, "Query failed: ${e.message}")
             KuaidiResult(false, null, null, null, e.message)

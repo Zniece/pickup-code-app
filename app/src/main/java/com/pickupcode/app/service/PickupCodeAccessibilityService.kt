@@ -295,9 +295,13 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             screenshotPath = screenshotPath,
             repo = AppDatabase.getInstance(this@PickupCodeAccessibilityService).repository
         )
-        // 通知：冲突提示已由 notifyConflicts 统一处理，此处不区分 existed
+        // 通知：同码已存在(existed) → 重复提示；否则正常通知。与短信路径统一，避免重复截图时同码常驻通知堆叠。
         for (s in saved) {
-            CodeNotificationManager.show(this@PickupCodeAccessibilityService, s.code, s.type, s.source, s.id)
+            RecognitionPipeline.notifySaved(
+                context = this@PickupCodeAccessibilityService,
+                dupCountProvider = { AppDatabase.getInstance(this@PickupCodeAccessibilityService).repository.countDuplicateGroups() },
+                code = s.code, type = s.type, source = s.source, id = s.id, existed = s.existed
+            )
         }
 
         // ⑦ 快递100 验证：识别到取件码时，用运单号反查取件码/地址作为标准答案，对照 OCR 结果（fire-and-forget）
