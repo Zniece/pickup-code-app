@@ -63,9 +63,8 @@ android {
             reset()
             include("arm64-v8a", "armeabi-v7a")
             isUniversalApk = false
-            // Play 要求多 APK 各架构 versionCode 必须唯一，否则上架被拒；由基础 versionCode 派生。
-            // 后续发版时记得随 versionCode 同步 +1（如 25/26）。
-            versionCodes = mapOf("armeabi-v7a" to 23, "arm64-v8a" to 24)
+            // 注：AGP 8.x 已移除 splits.abi.versionCodes（3.x/4.x 旧 API）。当前按架构拆包、
+            // 各分包共用默认 versionCode，适合侧载分发；若需上架 Play，改用 App Bundle（AAB）由 Play 自动分发。
         }
     }
 
