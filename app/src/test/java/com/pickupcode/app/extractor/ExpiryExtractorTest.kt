@@ -116,7 +116,8 @@ class ExpiryExtractorTest {
 
     @Test
     fun `expiryTimeFor 快递有文本时限信文本`() {
-        val r = ExpiryExtractor.expiryTimeFor("请于8月15日前取件", CodeExtractor.CodeType.pickup_parcel, baseMs)
+        // 显式传 Asia/Shanghai：避免 CI（UTC 时区）与本地（上海时区）结果漂移
+        val r = ExpiryExtractor.expiryTimeFor("请于8月15日前取件", CodeExtractor.CodeType.pickup_parcel, baseMs, zone)
         assertEquals(Instant.parse("2026-08-15T12:00:00Z").toEpochMilli(), r)
     }
 

@@ -38,15 +38,16 @@ object ExpiryExtractor {
      * @param text OCR/短信原文（未归一化也可，内部处理）
      * @param type 码类型（pickup_food 直接返回 null——取餐码即时消费不提醒）
      * @param createdAt 入库时间戳 ms
+     * @param zoneId 时区（默认系统时区；测试可显式传 Asia/Shanghai 保证确定性）
      * @return 到期时间戳；null = 无需提醒
      */
-    fun expiryTimeFor(text: String, type: CodeExtractor.CodeType, createdAt: Long): Long? {
+    fun expiryTimeFor(text: String, type: CodeExtractor.CodeType, createdAt: Long, zoneId: ZoneId = ZoneId.systemDefault()): Long? {
         if (type == CodeExtractor.CodeType.pickup_food) return null
         if (type == CodeExtractor.CodeType.coupon) return null
 
         val expiryText = extractExpiryText(text)
         if (expiryText != null) {
-            return parseDeadline(expiryText, createdAt) ?: createdAt + DEFAULT_PARCEL_LIFETIME_MS
+            return parseDeadline(expiryText, createdAt, zoneId) ?: createdAt + DEFAULT_PARCEL_LIFETIME_MS
         }
         return createdAt + DEFAULT_PARCEL_LIFETIME_MS
     }
