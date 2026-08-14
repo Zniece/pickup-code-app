@@ -70,6 +70,32 @@ class ExpiryExtractorTest {
         assertNull(ExpiryExtractor.parseDeadline("请尽快取件", baseMs, zone))
     }
 
+    // ── 非法日期防御（H1 崩溃修复回归测试）──
+
+    @Test
+    fun `parseDeadline 非法月份不崩溃并返回 null`() {
+        // "2026-08-15" 中正则会把 "26-08" 当作月-日 → 月=26，非法
+        assertNull(ExpiryExtractor.parseDeadline("有效期至2026-08-15", baseMs, zone))
+    }
+
+    @Test
+    fun `parseDeadline 非法日不崩溃并返回 null`() {
+        assertNull(ExpiryExtractor.parseDeadline("8月32日前取件", baseMs, zone))
+    }
+
+    @Test
+    fun `parseDeadline 非闰年2月29日不崩溃并返回 null`() {
+        // 2026 年不是闰年
+        assertNull(ExpiryExtractor.parseDeadline("2月29日前取件", baseMs, zone))
+    }
+
+    @Test
+    fun `parseDeadline 非法日期触发默认兜底而非崩溃`() {
+        // 端到端：非法日期应回退默认 72h 时长，而不是抛异常
+        val r = ExpiryExtractor.expiryTimeFor("有效期至2026-08-15", CodeExtractor.CodeType.pickup_parcel, baseMs)
+        assertEquals(baseMs + ExpiryExtractor.DEFAULT_PARCEL_LIFETIME_MS, r)
+    }
+
     // ── 第三层：类别兜底 ──
 
     @Test

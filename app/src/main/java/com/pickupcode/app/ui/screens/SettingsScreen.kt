@@ -585,7 +585,9 @@ private fun DebouncedKeyField(
     isPassword: Boolean = false,
     debounceMs: Long = 400
 ) {
-    var text by remember { mutableStateOf(value) }
+    // 以 value 作 key：外部回填（如 DataStore 异步加载后）变化时重置内部 text，
+    // 否则已配置的 Key/URL 在重启后显示为空/默认值（M1 回归）。
+    var text by remember(value) { mutableStateOf(value) }
     var visible by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // 用 remember 持有 Job，避免重组时重置为 null 导致防抖失效（H5）

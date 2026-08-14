@@ -75,16 +75,14 @@ object OCREngine {
         }
     }
 
-    fun close() {
-        // H3: 与 recognize 用同一把 mutex 同步关闭——避免在途 OCR 未完成就关闭客户端，
-        //     也避免 fire-and-forget 作用域泄漏。runBlocking 只阻塞到在途 OCR 完成（有 30s 超时兜底）。
-        kotlinx.coroutines.runBlocking {
-            mutex.withLock {
-                try {
-                    recognizer?.close()
-                } finally {
-                    recognizer = null
-                }
+    suspend fun close() {
+        // H3: 与 recognize 用同一把 mutex 同步关闭——避免在途 OCR 未完成就关闭客户端。
+        // 由调用方在后台协程调用；不要在主线程 runBlocking 调用（会阻塞等待在途 OCR，最长 30s，触发 ANR）。
+        mutex.withLock {
+            try {
+                recognizer?.close()
+            } finally {
+                recognizer = null
             }
         }
     }

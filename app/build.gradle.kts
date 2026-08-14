@@ -63,6 +63,9 @@ android {
             reset()
             include("arm64-v8a", "armeabi-v7a")
             isUniversalApk = false
+            // Play 要求多 APK 各架构 versionCode 必须唯一，否则上架被拒；由基础 versionCode 派生。
+            // 后续发版时记得随 versionCode 同步 +1（如 25/26）。
+            versionCodes = mapOf("armeabi-v7a" to 23, "arm64-v8a" to 24)
         }
     }
 
@@ -84,6 +87,12 @@ android {
         compose = true
         buildConfig = true
     }
+}
+
+// Room schema 导出目录：配合 @Database(exportSchema = true) 生成版本化 schema JSON，
+// 让 Room 能校验迁移链正确性（提交到仓库，配合 MigrationTestHelper 做迁移测试）。
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 dependencies {

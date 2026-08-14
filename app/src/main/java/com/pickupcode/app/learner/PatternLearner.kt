@@ -29,7 +29,7 @@ object PatternLearner {
 
     // 候选排除上下文 — 避免价格/数量/时长/楼层/度量等干扰片段被喂入学习池
     private val CANDIDATE_EXCLUDE_CTX = Regex(
-        """(?:\d+[元块]|\d+[份件个杯]|\d+[分钟]|\d+[号号楼栋]|""" +
+        """(?:\d+[元块]|\d+[份件个杯]|\d+[分钟]|\d+[号号楼栋室层]|""" +
         """\d+[折]|\d+[毫升升]|x\d{1,2}\b|\d{8,})""",
         RegexOption.IGNORE_CASE
     )
@@ -160,11 +160,12 @@ object PatternLearner {
         val clustered = mutableMapOf<String, MutableList<String>>()
         for (s in samples) {
             val text = s.optString("text", "")
+            // 排除上下文干扰必须在原始 text 上判断：候选码段只含数字/连字符、永不含中文单位字，
+            // 在 cand 上匹配永远不命中（此前是死代码，导致 "300毫升"→300、"502室"→502 等噪声照样进学习池）。
+            if (CANDIDATE_EXCLUDE_CTX.containsMatchIn(text)) continue
             // 先抠候选码段，再对每个码段 tokenize 聚类 —— 不再对整句脏文本 tokenize
             val candidates = extractCodeCandidates(text)
             for (cand in candidates) {
-                // 排除上下文干扰（价格/数量/时长/楼层/度量等）
-                if (CANDIDATE_EXCLUDE_CTX.containsMatchIn(cand)) continue
                 val tok = tokenize(cand)
                 if (tok.length >= 1) {
                     clustered.getOrPut(tok) { mutableListOf() }.add(cand)

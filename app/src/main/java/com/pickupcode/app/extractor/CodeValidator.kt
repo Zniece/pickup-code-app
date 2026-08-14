@@ -95,9 +95,10 @@ object CodeValidator {
         Regex("[A-Z]\\s*-?\\s*\\d{2,4}", RegexOption.IGNORE_CASE),  // LETTER_NUMBER_FOOD
         // PURE_NUMBER_FOOD：手动/AI 校验无上下文，收紧为 4-5 位，避免 2-3 位裸数字(42/123)被当合法码
         Regex("\\d{4,5}"),
-        // PREFIXED_CODE / PING_CODE 格式：覆盖带前缀上下文的码值（如 取餐码AB12、凭1-6-5020 等）
-        // 收紧：必须含数字（(?=.*\d)），纯字母串（ABC/hello）不再被 catch-all 放行
-        Regex("(?=.*\\d)[A-Za-z0-9\\-]{2,12}")
+        // PREFIXED_CODE / PING_CODE 格式：覆盖带前缀上下文的码值（如 取餐码AB12 等）
+        // 收紧：必须同时含字母和数字（(?=.*[A-Za-z])(?=.*\d)），纯字母串与纯数字串都不再被 catch-all 放行，
+        // 否则 "12/42/123" 这类 2-3 位裸数字会绕过 PURE_NUMBER_FOOD 的"4-5 位"收紧而通过校验。
+        Regex("(?=.*[A-Za-z])(?=.*\\d)[A-Za-z0-9\\-]{2,12}")
     )
 
     /** 递增数字序列：排除 0123 / 1234 ... 7890 */

@@ -37,15 +37,14 @@ object CouponDetector {
         }
 
     /** 释放 ML Kit 客户端（服务销毁时调用，避免 native 资源累积泄漏）。
-     *  与 detect 共用同一把 mutex：确保不会在 process 在途时关闭 scanner（H1）。 */
-    fun close() {
-        kotlinx.coroutines.runBlocking {
-            mutex.withLock {
-                try {
-                    scanner?.close()
-                } finally {
-                    scanner = null
-                }
+     *  与 detect 共用同一把 mutex：确保不会在 process 在途时关闭 scanner（H1）。
+     *  由调用方在后台协程调用；不要在主线程 runBlocking 调用（会阻塞等待在途检测，最长 10s，触发 ANR）。 */
+    suspend fun close() {
+        mutex.withLock {
+            try {
+                scanner?.close()
+            } finally {
+                scanner = null
             }
         }
     }

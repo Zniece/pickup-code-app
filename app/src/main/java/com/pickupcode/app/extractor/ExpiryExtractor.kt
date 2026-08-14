@@ -64,8 +64,6 @@ object ExpiryExtractor {
     /**
      * 第二层：把时限文本解析为时间戳。相对时间（今日/明天）→ 当天 20:00；绝对月日 → 解析 + 跨年 +1。
      *
-     * TODO(human): 实现 parseDeadline 的核心解析逻辑（含 [MONTH_DAY_REGEX] 月日解析与跨年处理）。
-     * 要求：
      * - 含 "今日"/"今天" → 返回 createdAt 当天 20:00（用 [endOfDay]）
      * - 含 "明日"/"明天" → 返回 createdAt 次日 20:00
      * - 命中 [MONTH_DAY_REGEX] → LocalDate(createdAt 年份, 月, 日)；若该日期早于 createdAt 当天（跨年），年份 +1；返回该日 20:00
@@ -73,7 +71,6 @@ object ExpiryExtractor {
      */
     fun parseDeadline(text: String, createdAt: Long, zoneId: ZoneId = ZoneId.systemDefault()): Long? {
         val postedDate = Instant.ofEpochMilli(createdAt).atZone(zoneId).toLocalDate()
-        // TODO(human) 从这里开始实现
         if (text.contains("今日") || text.contains("今天")) {
             return endOfDay(postedDate, zoneId)
         }
@@ -83,7 +80,10 @@ object ExpiryExtractor {
         MONTH_DAY_REGEX.find(text)?.let { m ->
             val month = m.groupValues[1].toIntOrNull() ?: return@let
             val day = m.groupValues[2].toIntOrNull() ?: return@let
-            val candidate = LocalDate.of(postedDate.year, month, day)
+            // 非法月/日直接 LocalDate.of 会抛 DateTimeException（如 "有效期至2026-08-15" 匹配出月=26、
+            // "8月32日"、"非闰年 2月29日"），异常会沿 expiryTimeFor → 识别入库链路一路抛出导致整轮崩溃。
+            // 解析失败时返回 null，让调用方回退默认时长，绝不向上抛异常。
+            val candidate = runCatching { LocalDate.of(postedDate.year, month, day) }.getOrNull() ?: return@let
             val adjusted = if (candidate.isBefore(postedDate)) candidate.plusYears(1) else candidate
             return endOfDay(adjusted, zoneId)
         }

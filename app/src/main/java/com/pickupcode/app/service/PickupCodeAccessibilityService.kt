@@ -11,6 +11,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
+import com.pickupcode.app.App
 import com.pickupcode.app.BuildConfig
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
@@ -57,6 +58,15 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     // 截图回调线程池：模块级单例，避免每次 captureAndExtract 新建线程泄漏（M7）
     private val screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
+    /** 异步释放 ML Kit 客户端。close() 会等待在途识别/检测完成（最长 30s/10s），
+     *  不能在 onUnbind/onDestroy 主线程里同步阻塞（ANR 风险）。 */
+    private fun closeMlKitClients() {
+        App.appScope.launch(Dispatchers.IO) {
+            try { OCREngine.close() } catch (_: Exception) {}
+            try { CouponDetector.close() } catch (_: Exception) {}
+        }
+    }
+
     private var lastAutoScanPkg: String? = null
     private var lastAutoScanTime = 0L
 
@@ -93,9 +103,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         mainHandler.removeCallbacksAndMessages(null)
         scope.cancel()
         screenshotExecutor.shutdownNow()
-        // 释放 ML Kit 客户端（unbind 未必紧跟 destroy，提前释放避免 native 累积）
-        try { OCREngine.close() } catch (_: Exception) {}
-        try { CouponDetector.close() } catch (_: Exception) {}
+        // 释放 ML Kit 客户端（unbind 未必紧跟 destroy，提前释放避免 native 累积）；异步，不在主线程阻塞
+        closeMlKitClients()
         return super.onUnbind(intent)
     }
 
@@ -103,9 +112,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         mainHandler.removeCallbacksAndMessages(null)
         scope.cancel()
         screenshotExecutor.shutdownNow()
-        // 释放 ML Kit 客户端，避免 native 资源随服务重建累积泄漏
-        try { OCREngine.close() } catch (_: Exception) {}
-        try { CouponDetector.close() } catch (_: Exception) {}
+        // 释放 ML Kit 客户端，避免 native 资源随服务重建累积泄漏；异步，不在主线程阻塞
+        closeMlKitClients()
         super.onDestroy()
     }
 

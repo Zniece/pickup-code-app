@@ -155,7 +155,7 @@ interface CodeHistoryDao {
     }
 }
 
-@Database(entities = [CodeHistory::class], version = 6, exportSchema = false)
+@Database(entities = [CodeHistory::class], version = 6, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun codeHistoryDao(): CodeHistoryDao
     val repository: CodeRepository by lazy { CodeRepository(codeHistoryDao()) }
@@ -210,9 +210,9 @@ abstract class AppDatabase : RoomDatabase() {
                     "pickup_code_db"
                 )
                     .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
-                    // 兜底迁移：无 exportSchema 时首轮迁移难以严格校验 schema，仍保留 destructive 作为最后的保险，
-                    // 避免未知后续版本导致无法升级卡死；已通过 addMigrations 保住 3→4 的数据。
-                    .fallbackToDestructiveMigration()
+                    // 不再使用 fallbackToDestructiveMigration：它会静默删库重建，导致用户取件记录无提示丢失。
+                    // 已开 exportSchema=true（schemaLocation 见 build.gradle.kts）让 Room 校验迁移，
+                    // 未来迁移写错时应升级失败报错，而不是清空核心数据。
                     .build()
                     .also { INSTANCE = it }
             }
