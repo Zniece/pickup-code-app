@@ -31,6 +31,12 @@ class CodeRepository(private val dao: CodeHistoryDao) {
     suspend fun updateGeo(id: Long, verified: Boolean, confidence: Float, formatted: String) =
         dao.updateGeo(id, verified, confidence, formatted)
 
+    suspend fun updateCode(id: Long, code: String) = dao.updateCode(id, code)
+
+    suspend fun updateSource(id: Long, source: String) = dao.updateSource(id, source)
+
+    suspend fun updateCabinet(id: Long, cabinet: String) = dao.updateCabinet(id, cabinet)
+
     suspend fun cleanExpired(before: Long, onScreenshot: (String) -> Unit) {
         dao.getExpiredScreenshots(before).forEach { onScreenshot(it) }
         dao.deleteExpiredTrash(before)

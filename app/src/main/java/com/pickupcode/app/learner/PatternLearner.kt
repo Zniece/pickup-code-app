@@ -210,11 +210,15 @@ object PatternLearner {
         if (token.isBlank()) return
         val excludes = getLearnedExcludes(context).toMutableSet()
         excludes.add(token.trim().take(20))
+        // 保底保留刚加入的词：Set 为插入序，超限时应丢弃最旧的，而非 take 前 100 把新词丢掉
+        val kept = if (excludes.size > MAX_EXCLUDES) {
+            excludes.drop(excludes.size - MAX_EXCLUDES).toSet()
+        } else excludes
         val arr = JSONArray()
-        for (e in excludes.take(MAX_EXCLUDES)) arr.put(e)
+        for (e in kept) arr.put(e)
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_EXCLUDES, arr.toString()).apply()
-        excludeCache = excludes   // 立即刷新进程内缓存
+        excludeCache = kept   // 立即刷新进程内缓存（与落盘保持一致）
         excludeCacheAt = System.currentTimeMillis()
     }
 
@@ -382,11 +386,21 @@ private val verifiedAddrLock = Any()
 
             // Keep only recent + relevant text
             val snippet = rawText.take(300)
-            arr.put(JSONObject().apply {
-                put("text", snippet)
-                put("src", source)          // B1: 样本来源打标
-                put("ts", System.currentTimeMillis() / 1000)
-            })
+
+            // 样本去重：同 text 已存在则只刷新 ts，避免同一噪声反复扫描重复入池、
+            // 凭空把簇计数顶到 MIN_SUGGEST 阈值（击穿"3 次独立样本"假设）。
+            val existingIdx = (0 until arr.length()).firstOrNull { i ->
+                arr.optJSONObject(i)?.optString("text") == snippet
+            }
+            if (existingIdx != null) {
+                arr.getJSONObject(existingIdx).put("ts", System.currentTimeMillis() / 1000)
+            } else {
+                arr.put(JSONObject().apply {
+                    put("text", snippet)
+                    put("src", source)          // B1: 样本来源打标
+                    put("ts", System.currentTimeMillis() / 1000)
+                })
+            }
 
             // Trim to max
             while (arr.length() > MAX_UNMATCHED) arr.remove(0)
@@ -485,6 +499,9 @@ private val verifiedAddrLock = Any()
 
     private const val KEY_LEARNED = "learned_rules"
     private const val KEY_LAST_AUTOAPPLY = "last_autoapply"
+    // learned_rules 的 read-modify-write 统一锁：setRuleEnabled/deleteRule/touchRule/markLearnedRuleBad/autoApply
+    // 都做 get→改→save，并发下若不共用同一把锁会丢更新（如 touchRule 用旧快照覆盖刚写入的 badCount）。
+    private val learnedRulesLock = Any()
     /** B3: 多少毫秒未使用视为"衰减"，自动降级为可选规则（默认 21 天）。 */
     private const val DECAY_MS = 21L * 24 * 60 * 60 * 1000
     private const val AUTO_APPLY_THROTTLE_MS = 6L * 60 * 60 * 1000 // 6h
@@ -492,31 +509,37 @@ private val verifiedAddrLock = Any()
 
     /** A1: 停用/启用某条已学规则。 */
     fun setRuleEnabled(context: Context, regex: String, enabled: Boolean) {
-        val rules = getLearnedPatterns(context).map {
-            if (it.regex == regex) it.copy(enabled = enabled) else it
+        synchronized(learnedRulesLock) {
+            val rules = getLearnedPatterns(context).map {
+                if (it.regex == regex) it.copy(enabled = enabled) else it
+            }
+            saveLearnedPatterns(context, rules)
         }
-        saveLearnedPatterns(context, rules)
     }
 
     /** A1: 删除某条已学规则。 */
     fun deleteRule(context: Context, regex: String) {
-        saveLearnedPatterns(context, getLearnedPatterns(context).filterNot { it.regex == regex })
+        synchronized(learnedRulesLock) {
+            saveLearnedPatterns(context, getLearnedPatterns(context).filterNot { it.regex == regex })
+        }
     }
 
     /** B3: 一条规则被识别命中时调用，更新 lastUsedAt 并解除衰减降级。
      *  节流：距上次 touch 该规则 < 阈值则跳过，避免识别主循环每次命中都全量重写 learned_rules。 */
     fun touchRule(context: Context, regex: String) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        // Low-2: 用规则自身字符串作节流 key（regex.hashCode() 有碰撞，会让不同规则互相错位节流）
-        val stampKey = "touch_" + regex
-        val now = System.currentTimeMillis()
-        val last = prefs.getLong(stampKey, 0L)
-        if (now - last < TOUCH_THROTTLE_MS) return
-        prefs.edit().putLong(stampKey, now).apply()
-        val rules = getLearnedPatterns(context).map {
-            if (it.regex == regex) it.copy(lastUsedAt = now, decayed = false) else it
+        synchronized(learnedRulesLock) {
+            val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            // Low-2: 用规则自身字符串作节流 key（regex.hashCode() 有碰撞，会让不同规则互相错位节流）
+            val stampKey = "touch_" + regex
+            val now = System.currentTimeMillis()
+            val last = prefs.getLong(stampKey, 0L)
+            if (now - last < TOUCH_THROTTLE_MS) return
+            prefs.edit().putLong(stampKey, now).apply()
+            val rules = getLearnedPatterns(context).map {
+                if (it.regex == regex) it.copy(lastUsedAt = now, decayed = false) else it
+            }
+            saveLearnedPatterns(context, rules)
         }
-        saveLearnedPatterns(context, rules)
     }
 
     private fun saveLearnedPatterns(context: Context, rules: List<LearnedRule>) {
@@ -544,40 +567,44 @@ private val verifiedAddrLock = Any()
     }
 
     /** Check suggestions and auto-apply patterns with count ≥ minCount and confidence ≥ minConf. */
-    fun autoApply(context: Context, minCount: Int = MIN_SUGGEST, minConfidence: Float = 0.5f): List<LearnedRule> {        val suggestions = getSuggestions(context)
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        val existing = getLearnedPatterns(context).toMutableList()
-        val existingRegexes = existing.map { it.regex }.toSet()
+    fun autoApply(context: Context, minCount: Int = MIN_SUGGEST, minConfidence: Float = 0.5f): List<LearnedRule> {
+        val suggestions = getSuggestions(context)
+        // 锁定 read-modify-write：existing 读取→追加→落盘→清样本 必须原子，
+        // 否则与 touchRule/markLearnedRuleBad 交错会丢更新（旧快照覆盖新写）。
+        return synchronized(learnedRulesLock) {
+            val existing = getLearnedPatterns(context).toMutableList()
+            val existingRegexes = existing.map { it.regex }.toSet()
 
-        val newRules = mutableListOf<LearnedRule>()
-        for (s in suggestions) {
-            if (s.count < minCount || s.confidence < minConfidence) continue
-            if (s.proposedRegex in existingRegexes) continue
+            val newRules = mutableListOf<LearnedRule>()
+            for (s in suggestions) {
+                if (s.count < minCount || s.confidence < minConfidence) continue
+                if (s.proposedRegex in existingRegexes) continue
 
-            // 加固：拒绝过度泛化的 token —— 含 'X'(任意字符) 的 token 会生成匹配任何文本的规则，
-            // 极易误报（如 X-d4 会匹配 "A-1234" 也会匹配 "啊-1234"）。只采纳由明确字符类
-            // （数字 d / 字母 L / 连字符 / 下划线 / 点 / 空格）构成的模式。
-            if (s.tokenPattern.any { it != 'd' && it != 'L' && it != '-' && it != '_' && it != ' ' && it != '.' && !it.isDigit() }) {
-                continue
+                // 加固：拒绝过度泛化的 token —— 含 'X'(任意字符) 的 token 会生成匹配任何文本的规则，
+                // 极易误报（如 X-d4 会匹配 "A-1234" 也会匹配 "啊-1234"）。只采纳由明确字符类
+                // （数字 d / 字母 L / 连字符 / 下划线 / 点 / 空格）构成的模式。
+                if (s.tokenPattern.any { it != 'd' && it != 'L' && it != '-' && it != '_' && it != ' ' && it != '.' && !it.isDigit() }) {
+                    continue
+                }
+
+                // Guess type: letter+digit combos are usually parcel codes
+                val type = if (s.label.contains("letter") || s.tokenPattern.any { it == 'L' } || s.tokenPattern.contains('-'))
+                    "pickup_parcel" else "pickup_food"
+
+                val rule = LearnedRule(s.proposedRegex, type, s.label, s.count,
+                    confidence = s.confidence, sampleCount = s.count, lastUsedAt = System.currentTimeMillis())
+                newRules.add(rule)
+                existing.add(rule)
             }
 
-            // Guess type: letter+digit combos are usually parcel codes
-            val type = if (s.label.contains("letter") || s.tokenPattern.any { it == 'L' } || s.tokenPattern.contains('-'))
-                "pickup_parcel" else "pickup_food"
+            if (newRules.isNotEmpty()) {
+                saveLearnedPatterns(context, existing)
 
-            val rule = LearnedRule(s.proposedRegex, type, s.label, s.count,
-                confidence = s.confidence, sampleCount = s.count, lastUsedAt = System.currentTimeMillis())
-            newRules.add(rule)
-            existing.add(rule)
+                // Clear unmatched samples after successful learning
+                clearUnmatched(context)
+            }
+            newRules
         }
-
-        if (newRules.isNotEmpty()) {
-            saveLearnedPatterns(context, existing)
-
-            // Clear unmatched samples after successful learning
-            clearUnmatched(context)
-        }
-        return newRules
     }
 
     /** 节流版 autoApply：距上次自动学习不足阈值则跳过，避免高频 IO（读文件+聚类+写规则）。 */
@@ -615,21 +642,22 @@ private val verifiedAddrLock = Any()
 
     /** 用户标记某个码值不正确时，给匹配到该码的已学规则加一次 badCount。
      *  badCount ≥ 3 的规则会在下次加载时被 CodeExtractor 跳过（自动停用）。 */
-    @Synchronized
     fun markLearnedRuleBad(context: Context, code: String) {
         if (code.isBlank()) return
-        val rules = getLearnedPatterns(context)
-        var changed = false
-        val updated = rules.map { r ->
-            if (r.enabled && r.badCount < 3) {
-                try {
-                    if (Regex(r.regex).matches(code)) {
-                        changed = true
-                        r.copy(badCount = r.badCount + 1)
-                    } else r
-                } catch (_: Exception) { r }
-            } else r
+        synchronized(learnedRulesLock) {
+            val rules = getLearnedPatterns(context)
+            var changed = false
+            val updated = rules.map { r ->
+                if (r.enabled && r.badCount < 3) {
+                    try {
+                        if (Regex(r.regex).matches(code)) {
+                            changed = true
+                            r.copy(badCount = r.badCount + 1)
+                        } else r
+                    } catch (_: Exception) { r }
+                } else r
+            }
+            if (changed) saveLearnedPatterns(context, updated)
         }
-        if (changed) saveLearnedPatterns(context, updated)
     }
 }

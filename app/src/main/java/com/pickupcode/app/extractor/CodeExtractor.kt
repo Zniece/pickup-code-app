@@ -272,6 +272,10 @@ object CodeExtractor {
             }
         }
 
+        // B3: 命中已学规则时先记录 code→规则，待最终 results 确定后再 touchRule 刷新 lastUsedAt，
+        // 避免"幽灵匹配"（规则命中但候选因分数过低未进入最终结果）也给规则续命、架空衰减机制。
+        val learnedHits = mutableMapOf<String, String>()
+
         for (line in lines) {
             val pos = posBonus(line, screenHeight)
             val size = sizeBonus(line, avgFontHeight)
@@ -302,10 +306,10 @@ object CodeExtractor {
                     val conflict = when (rule.type) { CodeType.pickup_food -> isParcelContext && !isFoodContext; CodeType.pickup_parcel -> isFoodContext && !isParcelContext; CodeType.coupon -> false }
                     if (conflict) s -= SCORE_CONFLICT_TYPE_PENALTY
 
-                    // B3: 命中已学规则 → 刷新其 lastUsedAt 并解除衰减（用 isLearned 标识，比 baseScore 判等更稳）
+                    // B3: 命中已学规则 → 先记录，待最终结果确定后统一 touchRule（见 extract 尾部）
                     if (context != null && rule.isLearned && m.value.length >= 3) {
                         regexToLearned[rule.regex.pattern]?.let { r ->
-                            PatternLearner.touchRule(context, r)
+                            learnedHits[m.value] = r
                         }
                     }
 
@@ -385,6 +389,12 @@ object CodeExtractor {
             // 只对无证据的弱候选(纯数字噪声)做 top×0.75 过滤，避免高分码拖死同屏次高分真实码。
             if (c.strong || c.score >= top * STRONG_PASS_RATIO)
                 results.add(ExtractedCode(c.code, c.type, c.source, (c.score / SCORE_PREFIXED).coerceIn(0f, 1f)))
+        }
+        // B3: 仅对真正进入结果的码刷新对应已学规则的 lastUsedAt（幽灵匹配不再续命）
+        if (context != null) {
+            for (r in results) {
+                learnedHits[r.code]?.let { PatternLearner.touchRule(context, it) }
+            }
         }
         if (context != null) recordLearning(context, results, allText, source)
         return results

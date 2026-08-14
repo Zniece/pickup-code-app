@@ -48,12 +48,15 @@ private data class DetailConfirmState(
     val addrIncorrect: Boolean = false
 )
 
+/** 详情页可编辑字段（M20：编辑走定向 UPDATE，避免整行覆盖丢更新）。 */
+enum class EditableField { CODE, SOURCE, CABINET, ADDRESS }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CodeDetailScreen(
     item: CodeHistory,
     onBack: () -> Unit,
-    onUpdated: (CodeHistory) -> Unit,
+    onUpdateField: (EditableField, String) -> Unit,
     onMarkDone: ((Long) -> Unit)? = null
 ) {
     val ctx = LocalContext.current; val scope = rememberCoroutineScope()
@@ -72,7 +75,11 @@ fun CodeDetailScreen(
         }
     }
     LaunchedEffect(loadedConfirmState) {
-        confirmState = loadedConfirmState
+        // 仅在用户尚未交互（confirmState 仍为默认全 false）时回填异步加载的初始值，
+        // 避免加载完成后整份覆盖用户在慢设备上刚点的「确认/标记错误」。
+        if (confirmState == DetailConfirmState()) {
+            confirmState = loadedConfirmState
+        }
     }
 
     Scaffold(
@@ -102,7 +109,7 @@ fun CodeDetailScreen(
             }
 
             EditableField(label = "码值", value = item.code, displayFontSize = 28.sp, displayFontWeight = FontWeight.Bold,
-                onSave = { onUpdated(item.copy(code = it)) })
+                onSave = { onUpdateField(EditableField.CODE, it) })
             if (item.isActive) {
                 InlineConfirm("码值正确", confirmed = confirmState.codeConfirmed, incorrect = confirmState.codeIncorrect,
                     onCorrect = {
@@ -128,7 +135,7 @@ fun CodeDetailScreen(
             }
 
             EditableField(label = "来源", value = item.source, displayFontSize = 18.sp,
-                onSave = { onUpdated(item.copy(source = it)) },
+                onSave = { onUpdateField(EditableField.SOURCE, it) },
                 trailingAction = {
                     // 🚪 跳转来源 App（与取件地址卡的 📍 同布局：右端图标）。仅当有关分享来源显示。
                     if (item.shareSourcePkg.isNotBlank()) {
@@ -158,12 +165,12 @@ fun CodeDetailScreen(
 
             if (item.cabinetNumber.isNotBlank()) {
                 EditableField(label = "柜号", value = item.cabinetNumber, displayFontSize = 16.sp,
-                    onSave = { onUpdated(item.copy(cabinetNumber = it)) })
+                    onSave = { onUpdateField(EditableField.CABINET, it) })
             }
 
             if (item.pickupAddress.isNotBlank()) {
                 EditableField(label = "取件地址", value = item.pickupAddress, displayFontSize = 16.sp,
-                    onSave = { onUpdated(item.copy(pickupAddress = it)) },
+                    onSave = { onUpdateField(EditableField.ADDRESS, it) },
                     trailingAction = {
                         // 📍 唤起导航：用 geo: URI 让系统地图应用弹出选择（与分享来源卡片的 🚪 同布局：右端图标）
                         IconButton(onClick = { launchNavigation(ctx, item.pickupAddress) }) {

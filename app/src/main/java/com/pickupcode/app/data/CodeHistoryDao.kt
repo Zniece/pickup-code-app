@@ -52,6 +52,16 @@ interface CodeHistoryDao {
     @Query("UPDATE code_history SET pickupAddress = :address WHERE id = :id")
     suspend fun updatePickupAddress(id: Long, address: String)
 
+    /** 详情页编辑用定向更新（M20）：只改对应列，避免整行 update 用旧快照覆盖快速连改的其它字段。 */
+    @Query("UPDATE code_history SET code = :code WHERE id = :id")
+    suspend fun updateCode(id: Long, code: String)
+
+    @Query("UPDATE code_history SET source = :source WHERE id = :id")
+    suspend fun updateSource(id: Long, source: String)
+
+    @Query("UPDATE code_history SET cabinetNumber = :cabinet WHERE id = :id")
+    suspend fun updateCabinet(id: Long, cabinet: String)
+
     /** 批量归档：同 code+type 的所有活跃记录标记为已取（一次取件对应多份同码记录全部归档）。 */
     @Query("UPDATE code_history SET isActive = 0, doneAt = :doneAt WHERE code = :code AND type = :type AND isActive = 1")
     suspend fun markDoneByCodeAndType(code: String, type: String, doneAt: Long = System.currentTimeMillis())

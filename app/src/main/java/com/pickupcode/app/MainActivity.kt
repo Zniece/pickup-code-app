@@ -27,6 +27,7 @@ import com.pickupcode.app.share.ShareReceiver
 import com.pickupcode.app.service.PickupCodeAccessibilityService
 import com.pickupcode.app.ui.components.ManualCodeDialog
 import com.pickupcode.app.ui.screens.CodeDetailScreen
+import com.pickupcode.app.ui.screens.EditableField
 import com.pickupcode.app.ui.screens.DedupScreen
 import com.pickupcode.app.ui.screens.SettingsScreen
 import com.pickupcode.app.ui.screens.StatsScreen
@@ -186,9 +187,15 @@ class MainActivity : ComponentActivity() {
             CodeDetailScreen(
                 item = code,
                 onBack = onBack,
-                onUpdated = { updated ->
+                onUpdateField = { field, value ->
                     lifecycleScope.launch(Dispatchers.IO) {
-                        db.codeHistoryDao().update(updated)
+                        // 定向更新对应列，避免整行 update 用旧快照覆盖快速连改的其它字段（M20）
+                        when (field) {
+                            EditableField.CODE -> db.repository.updateCode(codeId, value)
+                            EditableField.SOURCE -> db.repository.updateSource(codeId, value)
+                            EditableField.CABINET -> db.repository.updateCabinet(codeId, value)
+                            EditableField.ADDRESS -> db.repository.updatePickupAddress(codeId, value)
+                        }
                     }
                 },
                 onMarkDone = { id ->
