@@ -30,6 +30,11 @@ class ExpiryExtractorTest {
     }
 
     @Test
+    fun `extractExpiryText 提取完整年月日句式`() {
+        assertEquals("2026年8月15日前取件", ExpiryExtractor.extractExpiryText("您的包裹已到驿站，请于2026年8月15日前取件"))
+    }
+
+    @Test
     fun `extractExpiryText 无时限返回 null`() {
         assertNull(ExpiryExtractor.extractExpiryText("凭1-6-5020到驿站取件"))
         assertNull(ExpiryExtractor.extractExpiryText(""))
@@ -73,9 +78,37 @@ class ExpiryExtractorTest {
     // ── 非法日期防御（H1 崩溃修复回归测试）──
 
     @Test
-    fun `parseDeadline 非法月份不崩溃并返回 null`() {
-        // "2026-08-15" 中正则会把 "26-08" 当作月-日 → 月=26，非法
-        assertNull(ExpiryExtractor.parseDeadline("有效期至2026-08-15", baseMs, zone))
+    fun `parseDeadline 完整年月日横杠格式解析`() {
+        // 回归：此前 "2026-08-15" 被 MONTH_DAY_REGEX 错配成"月=26"而静默回退默认时长
+        val r = ExpiryExtractor.parseDeadline("有效期至2026-08-15", baseMs, zone)
+        assertEquals(Instant.parse("2026-08-15T12:00:00Z").toEpochMilli(), r)
+    }
+
+    @Test
+    fun `parseDeadline 完整年月日中文格式解析`() {
+        val r = ExpiryExtractor.parseDeadline("请于2026年8月15日前取件", baseMs, zone)
+        assertEquals(Instant.parse("2026-08-15T12:00:00Z").toEpochMilli(), r)
+    }
+
+    @Test
+    fun `parseDeadline 完整年月日斜杠与点格式解析`() {
+        assertEquals(Instant.parse("2026-08-15T12:00:00Z").toEpochMilli(),
+            ExpiryExtractor.parseDeadline("2026/8/15前取件", baseMs, zone))
+        assertEquals(Instant.parse("2026-08-15T12:00:00Z").toEpochMilli(),
+            ExpiryExtractor.parseDeadline("2026.8.15前取件", baseMs, zone))
+    }
+
+    @Test
+    fun `parseDeadline 显式年份当日到期有效`() {
+        // 入库当天到期的完整日期：显式年份不做跨年处理
+        val r = ExpiryExtractor.parseDeadline("请于2026-08-13前取件", baseMs, zone)
+        assertEquals(Instant.parse("2026-08-13T12:00:00Z").toEpochMilli(), r)
+    }
+
+    @Test
+    fun `parseDeadline 显式年份日期已过期返回 null`() {
+        // 年份早于入库日（旧短信/OCR 残留）：视为不可用，回退默认时长
+        assertNull(ExpiryExtractor.parseDeadline("有效期至2025-08-15", baseMs, zone))
     }
 
     @Test
@@ -92,7 +125,7 @@ class ExpiryExtractorTest {
     @Test
     fun `parseDeadline 非法日期触发默认兜底而非崩溃`() {
         // 端到端：非法日期应回退默认 72h 时长，而不是抛异常
-        val r = ExpiryExtractor.expiryTimeFor("有效期至2026-08-15", CodeExtractor.CodeType.pickup_parcel, baseMs)
+        val r = ExpiryExtractor.expiryTimeFor("有效期至8月32日", CodeExtractor.CodeType.pickup_parcel, baseMs)
         assertEquals(baseMs + ExpiryExtractor.DEFAULT_PARCEL_LIFETIME_MS, r)
     }
 
@@ -118,6 +151,12 @@ class ExpiryExtractorTest {
     fun `expiryTimeFor 快递有文本时限信文本`() {
         // 显式传 Asia/Shanghai：避免 CI（UTC 时区）与本地（上海时区）结果漂移
         val r = ExpiryExtractor.expiryTimeFor("请于8月15日前取件", CodeExtractor.CodeType.pickup_parcel, baseMs, zone)
+        assertEquals(Instant.parse("2026-08-15T12:00:00Z").toEpochMilli(), r)
+    }
+
+    @Test
+    fun `expiryTimeFor 快递完整年月日时限信文本`() {
+        val r = ExpiryExtractor.expiryTimeFor("请于2026-08-15前取件", CodeExtractor.CodeType.pickup_parcel, baseMs, zone)
         assertEquals(Instant.parse("2026-08-15T12:00:00Z").toEpochMilli(), r)
     }
 
