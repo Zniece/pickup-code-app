@@ -29,6 +29,9 @@ object ExpiryExtractor {
         "(?:请于|截止|有效期至|最晚|保管至|取件有效期)\\s*([^，,。；;|\\n]{3,20})"
     )
 
+    /** 完整年月日形态（2026-08-15 / 2026年8月15日 / 2026/8/15 / 2026.8.15）。 */
+    private val YEAR_MONTH_DAY_REGEX = Regex("(\\d{4})\\s*[年/.\\-]\\s*(\\d{1,2})\\s*[月/.\\-]\\s*(\\d{1,2})\\s*日?")
+
     /** "X月X日" 形态（含 8-15 / 08月15日 / 8.15 / 8/15 等变体）。 */
     private val MONTH_DAY_REGEX = Regex("(\\d{1,2})\\s*[月/.\\-]\\s*(\\d{1,2})\\s*日?")
 
@@ -63,10 +66,11 @@ object ExpiryExtractor {
     }
 
     /**
-     * 第二层：把时限文本解析为时间戳。相对时间（今日/明天）→ 当天 20:00；绝对月日 → 解析 + 跨年 +1。
+     * 第二层：把时限文本解析为时间戳。相对时间（今日/明天）→ 当天 20:00；绝对日期 → 解析 + 跨年 +1。
      *
      * - 含 "今日"/"今天" → 返回 createdAt 当天 20:00（用 [endOfDay]）
      * - 含 "明日"/"明天" → 返回 createdAt 次日 20:00
+     * - 命中 [YEAR_MONTH_DAY_REGEX]（显式年份）→ 直接解析；日期早于 createdAt 当天（旧短信/OCR 残留）视为不可用 → null
      * - 命中 [MONTH_DAY_REGEX] → LocalDate(createdAt 年份, 月, 日)；若该日期早于 createdAt 当天（跨年），年份 +1；返回该日 20:00
      * - 以上都不满足 → null（调用方回退默认时长）
      */
@@ -78,12 +82,22 @@ object ExpiryExtractor {
         if (text.contains("明日") || text.contains("明天")) {
             return endOfDay(postedDate.plusDays(1), zoneId)
         }
+        // 完整年月日必须优先于 MONTH_DAY_REGEX：否则 "2026-08-15" 会被后者错配成"月=26"，
+        // 且其残片（如 "6-08"）还会被跨年逻辑误加一年。命中即定案（含不可用场景），不让残片再匹配。
+        YEAR_MONTH_DAY_REGEX.find(text)?.let { m ->
+            val year = m.groupValues[1].toIntOrNull()
+            val month = m.groupValues[2].toIntOrNull()
+            val day = m.groupValues[3].toIntOrNull()
+            if (year == null || month == null || day == null) return null
+            // 非法月/日（如 8月32日）直接 LocalDate.of 会抛 DateTimeException；异常若沿
+            // expiryTimeFor → 识别入库链路冒出会导致整轮崩溃。解析失败一律返回 null 回退默认时长。
+            val candidate = runCatching { LocalDate.of(year, month, day) }.getOrNull() ?: return null
+            if (candidate.isBefore(postedDate)) return null
+            return endOfDay(candidate, zoneId)
+        }
         MONTH_DAY_REGEX.find(text)?.let { m ->
             val month = m.groupValues[1].toIntOrNull() ?: return@let
             val day = m.groupValues[2].toIntOrNull() ?: return@let
-            // 非法月/日直接 LocalDate.of 会抛 DateTimeException（如 "有效期至2026-08-15" 匹配出月=26、
-            // "8月32日"、"非闰年 2月29日"），异常会沿 expiryTimeFor → 识别入库链路一路抛出导致整轮崩溃。
-            // 解析失败时返回 null，让调用方回退默认时长，绝不向上抛异常。
             val candidate = runCatching { LocalDate.of(postedDate.year, month, day) }.getOrNull() ?: return@let
             val adjusted = if (candidate.isBefore(postedDate)) candidate.plusYears(1) else candidate
             return endOfDay(adjusted, zoneId)
