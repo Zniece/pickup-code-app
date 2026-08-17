@@ -32,6 +32,9 @@ object AddressExtractor {
     // 「地址:」标签标记（S0b 与 extractAddressForCode 共用）
     private val REG_ADDR_LABEL_MARK = Regex("地址[:：]")
 
+    /** 快递运单号行（品牌+快递后缀+冒号/空格+长数字串），如 中通快递:79130792811022——非地址。 */
+    private val COURIER_TRACKING_LINE = Regex("(?:快递|速递|物流|速运|驿站|智能柜)[:：]?\\s*\\d{9,}")
+
     // ---------------------------------------------------------------
     // 长度/几何容差常量（各步骤共用，按语义分开命名）
     // ---------------------------------------------------------------
@@ -886,6 +889,9 @@ object AddressExtractor {
         if (listOf("件码", "取件码", "取货码", "提取码", "取餐码", "取单码").any { t.contains(it) }) return false
         // Exclude 运单号/单号 标签（如 OCR 误写的 快谨单号）——不是取件地址
         if (t.endsWith("单号") || listOf("运单号", "订单号", "快运单号", "快递单号").any { t.contains(it) }) return false
+        // Exclude 快递运单号行："品牌+快递后缀+冒号/空格+长数字串"（如 中通快递:79130792811022）
+        // 这是快递详情页的运单号行，绝不可能是指件地址；真实地址不会带"快递:9位以上纯数字"。
+        if (COURIER_TRACKING_LINE.containsMatchIn(t)) return false
         // Exclude 订单/交易/UI 界面标签（如 OCR 把「订单详情」读成 订单详惰、交易快照、券号/券码等）——不是取件地址
         // 「商品」单独排除会误杀真实地址「商品街」（如 育新路商品街），仅当不含「商品街」时才排除
         if (listOf("订单", "交易", "快照", "详惰", "详情页", "规格", "小计", "合计", "数量", "券码", "券号").any { t.contains(it) } ||
