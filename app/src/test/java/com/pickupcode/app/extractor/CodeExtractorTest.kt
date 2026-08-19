@@ -78,4 +78,40 @@ class CodeExtractorTest {
         assertTrue(CodeExtractor.extract(emptyList()).isEmpty())
         assertTrue(CodeExtractor.extract(listOf(line("这是一段没有码的文字"))).isEmpty())
     }
+
+    // ── 边界回归：Android(ICU) 的 \b 把中文当词字符，码值紧贴中文时 \b 失效漏抓 ──
+    // 桌面 JVM 的 \b 是 ASCII 语义，此 bug 在单测环境复现不出（设备必现），
+    // 这些用例锁定「码值紧贴中文仍须提取」的行为要求，防止边界写法被改回 \b。
+    @Test
+    @DisplayName("6位纯数字码紧贴中文（欢猫智柜 749019复制）应被提取")
+    fun extract_six_digit_adjacent_chinese() {
+        val r = CodeExtractor.extract(listOf(
+            line("韵达快递435316307329341 取件码"),
+            line("育新路与李庄街西李庄社区卫生所对面3号柜欢猫智柜"),
+            line("749019复制 您的快件己暂存至周口市育新路3号柜")
+        ))
+        assertTrue(r.any { it.code == "749019" && it.type == CodeExtractor.CodeType.pickup_parcel },
+            "应提取出 749019(pickup_parcel)，实际: ${r.map { "${it.code}(${it.type})" }}")
+    }
+
+    @Test
+    @DisplayName("字母段式码紧贴中文（D-06003取件）应被提取")
+    fun extract_letter_dash_adjacent_chinese() {
+        val r = CodeExtractor.extract(listOf(line("【菜鸟驿站】您的快件在快递柜，凭D-06003取件")))
+        assertTrue(r.any { it.code == "D-06003" }, "应提取出 D-06003，实际: ${r.map { it.code }}")
+    }
+
+    @Test
+    @DisplayName("三段式码紧贴中文（1-6-5020到）应被提取")
+    fun extract_three_seg_adjacent_chinese() {
+        val r = CodeExtractor.extract(listOf(line("凭1-6-5020到1号柜取件")))
+        assertTrue(r.any { it.code == "1-6-5020" }, "应提取出 1-6-5020，实际: ${r.map { it.code }}")
+    }
+
+    @Test
+    @DisplayName("长运单号（15位纯数字）不被当作取件码")
+    fun extract_rejects_long_tracking_number() {
+        val r = CodeExtractor.extract(listOf(line("韵达快递435316307329341 您的快件已到")))
+        assertTrue(r.none { it.code == "435316307329341" }, "运单号不应被识别为取件码")
+    }
 }

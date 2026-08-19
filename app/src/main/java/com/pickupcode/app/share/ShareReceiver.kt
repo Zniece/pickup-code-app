@@ -349,8 +349,19 @@ object ShareReceiver {
         if (!hasCoupon) {
             // 正则主路径先行（问题3：分享路径接入 AI，但不阻塞）
             val regexResults = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context, source = "share") }
+            // 诊断日志：打印当前阈值 + 每个正则结果及其通过/被拒原因，便于定位 6 位纯数字码漏识别
+            Log.d(TAG, "正则提取结果 ${regexResults.size} 条，置信度阈值=${settings.confidenceThreshold}，" +
+                "取件=${settings.enableParcelCodes}/取餐=${settings.enableFoodCodes}/券=${settings.enableCouponCodes}")
             for (re in regexResults) {
-                if (re.confidence >= settings.confidenceThreshold && !isTypeDisabled(re.type, settings)) {
+                val confOk = re.confidence >= settings.confidenceThreshold
+                val typeOk = !isTypeDisabled(re.type, settings)
+                Log.d(TAG, "正则候选 code=${re.code} type=${re.type} conf=${re.confidence} " +
+                    "src=${re.source} → confOK=$confOk typeOK=$typeOk " +
+                    if (confOk && typeOk) "【通过】" else "【被拒：${buildString {
+                        if (!confOk) append("置信度${re.confidence}<阈值${settings.confidenceThreshold};")
+                        if (!typeOk) append("类型${re.type}已关闭;")
+                    }}】")
+                if (confOk && typeOk) {
                     allResults.add(re)
                 }
             }
@@ -363,6 +374,8 @@ object ShareReceiver {
                 try {
                     val aiRes = aiDeferred.await()
                     if (aiRes.error != null) Log.w(TAG, "AI 识别失败: ${aiRes.error}")
+                    Log.d(TAG, "AI 识别返回 ${aiRes.results.size} 条: " +
+                        aiRes.results.joinToString { "${it.code}(${it.type})" })
                     for (ai in aiRes.results) {
                         if (isTypeDisabled(ai.type, settings)) continue
                         if (allResults.any { it.code == ai.code && it.type == ai.type }) continue // 同码同type去重
@@ -374,11 +387,13 @@ object ShareReceiver {
                 } catch (e: Exception) {
                     Log.w(TAG, "AI 结果合并异常: ${e.message}")
                 }
+            } else {
+                Log.d(TAG, "AI 识别未启用（enableAI=${settings.enableAI}, apiKey非空=${settings.apiKey.isNotBlank()}），跳过")
             }
         }
 
         if (allResults.isEmpty()) {
-            Log.d(TAG, "No pickup code found")
+            Log.d(TAG, "最终识别结果为空 —— 正则与 AI 均未产出可入库的码（详见上方逐条候选日志）")
             return
         }
 

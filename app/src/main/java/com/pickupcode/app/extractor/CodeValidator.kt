@@ -6,12 +6,16 @@ import com.pickupcode.app.learner.PatternLearner
 /** 码格式校验：合法格式白名单、排除规则与 pattern-ID 分类（自 CodeExtractor 拆出，R1）。 */
 object CodeValidator {
 
-    /** 5 个共享解析正则（CodeExtractor 识别用 + 本类的格式分类表用，单一归属）。 */
-    internal val THREE_SEGMENT_PARCEL = Regex("\\b(\\d{1,3})-(\\d{1,2})-(\\d{3,6})\\b")
-    internal val FOUR_SEGMENT_PARCEL = Regex("\\b([A-Za-z]?\\d{1,2})-(\\d{1,2})-(\\d{1,2})-(\\d{2,4})\\b")
-    internal val LETTER_TWO_SEGMENT_PARCEL = Regex("\\b([A-Z])-(\\d{1,2})-(\\d{3,4})\\b", RegexOption.IGNORE_CASE)
-    internal val LETTER_DASH_FIVE_PARCEL = Regex("\\b([A-Za-z])-?(\\d{5,6})\\b", RegexOption.IGNORE_CASE)
-    internal val LONG_NUMBER_PARCEL = Regex("\\b(\\d{6,8})\\b")
+    /** 5 个共享解析正则（CodeExtractor 识别用 + 本类的格式分类表用，单一归属）。
+     *  边界说明（重要）：不用 \b，改用显式环视 (?<![\dA-Za-z]) / (?![\dA-Za-z])。
+     *  桌面 JVM 的 \b 是 ASCII 语义，但 Android libcore 的 java.util.regex 基于 ICU，
+     *  \b 把中文视为词字符——码值紧贴中文时（如 OCR 行 "749019复制"）末尾 \b 失效导致漏抓。
+     *  （PatternLearner.PURE_CANDIDATE 早已用同样写法规避此坑，见其注释。） */
+    internal val THREE_SEGMENT_PARCEL = Regex("(?<![\\dA-Za-z])(\\d{1,3})-(\\d{1,2})-(\\d{3,6})(?![\\dA-Za-z])")
+    internal val FOUR_SEGMENT_PARCEL = Regex("(?<![\\dA-Za-z])([A-Za-z]?\\d{1,2})-(\\d{1,2})-(\\d{1,2})-(\\d{2,4})(?![\\dA-Za-z])")
+    internal val LETTER_TWO_SEGMENT_PARCEL = Regex("(?<![\\dA-Za-z])([A-Z])-(\\d{1,2})-(\\d{3,4})(?![\\dA-Za-z])", RegexOption.IGNORE_CASE)
+    internal val LETTER_DASH_FIVE_PARCEL = Regex("(?<![\\dA-Za-z])([A-Za-z])-?(\\d{5,6})(?![\\dA-Za-z])", RegexOption.IGNORE_CASE)
+    internal val LONG_NUMBER_PARCEL = Regex("(?<![\\dA-Za-z])(\\d{6,8})(?![\\dA-Za-z])")
 
     private const val PATTERN_PREFIXED = "PREFIXED_CODE"
 

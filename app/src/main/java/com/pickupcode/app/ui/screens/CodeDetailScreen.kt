@@ -19,6 +19,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -29,6 +30,7 @@ import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.extractor.CodeValidator
 import com.pickupcode.app.learner.CommonStationStore
 import com.pickupcode.app.learner.PatternLearner
+import com.pickupcode.app.ui.components.BrandLogo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -137,6 +139,21 @@ fun CodeDetailScreen(
 
             EditableField(label = "来源", value = item.source, displayFontSize = 18.sp,
                 onSave = { onUpdateField(EditField.SOURCE, it) },
+                leadingIcon = {
+                    // 品牌 logo（未收录的品牌不显示，仅文字）
+                    val lr = BrandLogo.logoRes(item.source, item.shareSourceName, item.shareSourcePkg)
+                    if (lr != null) {
+                        Box(
+                            modifier = Modifier.size(32.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(painterResource(lr), contentDescription = item.source,
+                                contentScale = ContentScale.Fit, modifier = Modifier.size(28.dp))
+                        }
+                    }
+                },
                 trailingAction = {
                     // 🚪 跳转来源 App（与取件地址卡的 📍 同布局：右端图标）。仅当有关分享来源显示。
                     if (item.shareSourcePkg.isNotBlank()) {
@@ -374,6 +391,7 @@ private fun InlineConfirm(label: String, confirmed: Boolean, incorrect: Boolean,
 @Composable
 private fun EditableField(label: String, value: String, displayFontSize: androidx.compose.ui.unit.TextUnit,
                           displayFontWeight: FontWeight? = null, onSave: (String) -> Unit,
+                          leadingIcon: (@Composable () -> Unit)? = null,
                           trailingAction: (@Composable () -> Unit)? = null) {
     var editing by remember { mutableStateOf(false) }
     var editedValue by remember(value) { mutableStateOf(value) }
@@ -384,6 +402,12 @@ private fun EditableField(label: String, value: String, displayFontSize: android
             Modifier.padding(16.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            // 前置图标（如：来源行的品牌 logo），可空则不占位
+            if (leadingIcon != null) {
+                Box(Modifier.padding(end = 12.dp), contentAlignment = Alignment.Center) {
+                    leadingIcon()
+                }
+            }
             Column(Modifier.weight(1f)) {
                 Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(4.dp))

@@ -8,6 +8,8 @@ import java.io.File
 
 object PatternLearner {
 
+    private const val TAG = "PatternLearner"
+
     private const val PREFS = "pattern_learner"
     private const val KEY_TOTAL = "total_scans"
     private const val KEY_ATTEMPTS = "attempts"
@@ -83,6 +85,7 @@ object PatternLearner {
      *  仅轻量记录；autoApply（读文件+聚类+写规则）通过低频节流触发，避免每次 miss 都做重 IO。
      *  @param source B1 样本来源打标：share / sms / screen / manual / notify */
     fun recordMiss(context: Context, rawText: String, source: String = "unknown") {
+        Log.d(TAG, "recordMiss: source=$source, 文本 ${rawText.length} 字符 → 记入未匹配样本池（自动学习 6h 节流触发）")
         synchronized(this) {
             val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             prefs.edit()
@@ -100,6 +103,7 @@ object PatternLearner {
      *  Call this from notification tap / manual verification UI. */
     @Synchronized
     fun recordVerified(context: Context, patternId: String) {
+        Log.d(TAG, "recordVerified: patternId=$patternId")
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putInt(KEY_VERIFIED, prefs.getInt(KEY_VERIFIED, 0) + 1)
@@ -110,6 +114,7 @@ object PatternLearner {
     /** Record that a user marked an extracted code as incorrect. */
     @Synchronized
     fun recordCodeIncorrect(context: Context, patternId: String) {
+        Log.d(TAG, "recordCodeIncorrect: patternId=$patternId")
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         prefs.edit()
             .putInt(KEY_PAT_PREFIX + patternId + "_bad", prefs.getInt(KEY_PAT_PREFIX + patternId + "_bad", 0) + 1)
@@ -220,6 +225,7 @@ object PatternLearner {
             .edit().putString(KEY_EXCLUDES, arr.toString()).apply()
         excludeCache = kept   // 立即刷新进程内缓存（与落盘保持一致）
         excludeCacheAt = System.currentTimeMillis()
+        Log.d(TAG, "新增排除词「$token」（当前共 ${kept.size} 条，上限 $MAX_EXCLUDES）")
     }
 
     /** 当前可学习的排除片段。 */
@@ -599,9 +605,13 @@ private val verifiedAddrLock = Any()
 
             if (newRules.isNotEmpty()) {
                 saveLearnedPatterns(context, existing)
+                Log.d(TAG, "自动学习新增 ${newRules.size} 条规则: " +
+                    newRules.joinToString { "${it.label}=${it.regex}[${it.type}] conf=${it.confidence} count=${it.count}" })
 
                 // Clear unmatched samples after successful learning
                 clearUnmatched(context)
+            } else {
+                Log.d(TAG, "自动学习运行：无满足条件的新规则（样本<3 或置信度<0.5）")
             }
             newRules
         }
@@ -652,7 +662,10 @@ private val verifiedAddrLock = Any()
                     try {
                         if (Regex(r.regex).matches(code)) {
                             changed = true
-                            r.copy(badCount = r.badCount + 1)
+                            val nb = r.copy(badCount = r.badCount + 1)
+                            Log.d(TAG, "已学规则 ${r.regex} 因码「$code」被标记不正确，badCount=${nb.badCount}" +
+                                if (nb.badCount >= 3) " → 达到 3 次自动停用" else "")
+                            nb
                         } else r
                     } catch (_: Exception) { r }
                 } else r

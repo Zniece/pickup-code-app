@@ -1,5 +1,6 @@
 package com.pickupcode.app.ui.screens.home
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -23,12 +24,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.pickupcode.app.data.CodeHistory
+import com.pickupcode.app.ui.components.BrandLogo
 import com.pickupcode.app.ui.theme.TypeCoupon
 import com.pickupcode.app.ui.theme.TypeFood
 import com.pickupcode.app.ui.theme.TypeParcel
@@ -114,18 +118,38 @@ fun CodeHistoryCard(
                 }
             }
 
-            // 类型 badge
-            Text(
-                text = typeLabel(item.type),
-                fontSize = 10.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = color,
-                modifier = Modifier
-                    .padding(end = 8.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(color.copy(alpha = 0.1f))
-                    .padding(horizontal = 8.dp, vertical = 3.dp)
-            )
+            // 品牌 logo（未收录的品牌回退为类型徽标）
+            val logoRes = BrandLogo.logoRes(item.source, item.shareSourceName, item.shareSourcePkg)
+            if (logoRes != null) {
+                Box(
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(logoRes),
+                        contentDescription = item.source.ifBlank { item.shareSourceName },
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            } else {
+                // 类型 badge
+                Text(
+                    text = typeLabel(item.type),
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = color,
+                    modifier = Modifier
+                        .padding(end = 8.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(color.copy(alpha = 0.1f))
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                )
+            }
 
             // 操作按钮
             IconButton(onClick = onDone, modifier = Modifier.size(40.dp)) {

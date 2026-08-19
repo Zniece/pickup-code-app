@@ -22,11 +22,13 @@ object CodeExtractor {
     data class ExtractedCode(val code: String, val type: CodeType, val source: String, val confidence: Float)
     enum class CodeType { pickup_food, pickup_parcel, coupon }
 
+    // 边界统一用 (?<![\dA-Za-z])/(?![\dA-Za-z]) 而非 \b：Android(ICU) 的 \b 把中文当词字符，
+    // 码值紧贴中文（如 "749019复制"）时 \b 失效漏抓；桌面 JVM 测不出来（ASCII \b），真机必现。
     // A8-3-3315: letter prefix + 3 dash-separated segments, e.g. locker codes (A/B/C prefix)
-    private val LETTER_THREE_SEG_PARCEL = Regex("\\b([A-Za-z]\\d{1,2})-(\\d{1,2})-(\\d{3,6})\\b", RegexOption.IGNORE_CASE)
-    private val LETTER_DASH_THREE_PARCEL = Regex("\\b([A-Za-z])-(\\d{3,4})\\b", RegexOption.IGNORE_CASE)
-    private val LETTER_NUMBER_FOOD = Regex("\\b([A-Z]\\s*[-]?\\s*\\d{2,4})\\b", RegexOption.IGNORE_CASE)
-    private val PURE_NUMBER_FOOD = Regex("\\b(?<![\\d-])(\\d{2,5})(?![\\d])\\b")
+    private val LETTER_THREE_SEG_PARCEL = Regex("(?<![\\dA-Za-z])([A-Za-z]\\d{1,2})-(\\d{1,2})-(\\d{3,6})(?![\\dA-Za-z])", RegexOption.IGNORE_CASE)
+    private val LETTER_DASH_THREE_PARCEL = Regex("(?<![\\dA-Za-z])([A-Za-z])-(\\d{3,4})(?![\\dA-Za-z])", RegexOption.IGNORE_CASE)
+    private val LETTER_NUMBER_FOOD = Regex("(?<![\\dA-Za-z])([A-Z]\\s*[-]?\\s*\\d{2,4})(?![\\dA-Za-z])", RegexOption.IGNORE_CASE)
+    private val PURE_NUMBER_FOOD = Regex("(?<![\\dA-Za-z-])(\\d{2,5})(?![\\dA-Za-z])")
     private val PREFIXED_CODE = Regex("(取[餐件货单]码|取餐号|取单号|排号|券号|提取码)[:：]?\\s*(?:为|是)?\\s*([A-Za-z0-9\\-]{2,12})")
     // 菜鸟/驿站类通知标准句式：凭1-6-5020到...取（件）；容忍 OCR 在码值与方位词间插入空格
     private val PING_CODE = Regex("(?:凭|好评码|提取码|券号)[:：]?\\s*([A-Za-z0-9\\-]{2,12}?)\\s*(?=(?:到|至|去|领|取|在|格|号柜|菜鸟|驿站|快递柜))", RegexOption.IGNORE_CASE)
@@ -35,8 +37,8 @@ object CodeExtractor {
     // 否则"231607 到育新路..."这类码后跟真实地址的会被漏抓（需保留开头强锚定 + 后不能紧邻数字/破折号）
     private val NEXT_LINE_CODE = Regex("^\\s*([A-Za-z0-9\\-]{2,12})\\s*(?![-\\d])")
     private val CODE_KEYWORD_NEAR = Regex("(取[件餐货]码|取餐号|驿站|快递柜|自提柜|取件点)")
-    private val ORDER_LONG_SQL = Regex("\\b\\d{6,}-\\d{5,}\\b")
-    private val ORDER_SHORT_SQL = Regex("\\b\\d{2,4}-\\d{3,4}-\\d{4,}\\b")
+    private val ORDER_LONG_SQL = Regex("(?<![\\dA-Za-z])\\d{6,}-\\d{5,}(?![\\dA-Za-z])")
+    private val ORDER_SHORT_SQL = Regex("(?<![\\dA-Za-z])\\d{2,4}-\\d{3,4}-\\d{4,}(?![\\dA-Za-z])")
     // 热循环正则预编译：避免每行/每次调用重复编译 Regex（原在 normalizeText 与逐行前缀匹配内 new）
     private val WHITESPACE_REGEX = Regex("\\s+")
     private val JOINED_PREFIX_CODE = Regex("^[餐件货单]码[A-Za-z0-9].*")
@@ -256,6 +258,13 @@ object CodeExtractor {
         val regexToLearned = mutableMapOf<String, String>()
         if (context != null) {
             val learned = com.pickupcode.app.learner.PatternLearner.getLearnedPatterns(context)
+            // 诊断：已加载的自学习规则概览（仅 Debug 构建，避免无障碍热路径日志开销）
+            if (com.pickupcode.app.BuildConfig.DEBUG) {
+                val active = learned.count { it.enabled && it.badCount < 3 }
+                android.util.Log.d("LearnedDiag", "自学习规则共 ${learned.size} 条（启用 $active / 停用 ${learned.size - active}）: " +
+                    learned.filter { it.enabled && it.badCount < 3 }
+                        .joinToString { "${it.regex}[${it.type}]${if (it.decayed) "(衰减)" else ""}" })
+            }
             for (rule in learned) {
                 // A1: 用户手动停用的规则不再参与识别
                 // A1: 用户手动停用 → 跳过；badCount ≥ 3 → 自动停用
@@ -281,7 +290,17 @@ object CodeExtractor {
             val size = sizeBonus(line, avgFontHeight)
             for (rule in rules) {
                 rule.regex.findAll(line.text).forEach matchLoop@{ m ->
-                    if (isExcluded(m.value, context)) return@matchLoop
+                    if (isExcluded(m.value, context)) {
+                        // 诊断：被自学习排除词命中时单独提示（普通排除原因不逐条打，避免刷屏）
+                        if (context != null && PatternLearner.isLearnedExcluded(m.value, context)) {
+                            android.util.Log.d("LearnedDiag", "候选 ${m.value} 被自学习排除词命中剔除（规则 ${rule.regex.pattern}）")
+                        }
+                        return@matchLoop
+                    }
+                    // 诊断：已学规则命中（仅 Debug 构建）
+                    if (rule.isLearned && com.pickupcode.app.BuildConfig.DEBUG) {
+                        android.util.Log.d("LearnedDiag", "已学规则命中候选 ${m.value}（${rule.regex.pattern}）")
+                    }
                     // Auto-learned rules: reject over-short matches (e.g. X1 / A1 2-char noise)
                     if (rule.minMatchLen > 0 && m.value.length < rule.minMatchLen) return@matchLoop
                     var s = rule.baseScore + pos
