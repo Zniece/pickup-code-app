@@ -49,6 +49,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -98,6 +99,8 @@ fun HomeScreen(
     val dedupCount by vm::dedupCount
     var typeFilter by remember { mutableStateOf("all") }
     var guideExpanded by remember { mutableStateOf(false) }
+    // 分组方式：time=按时间 / address=按地址聚合（rememberSaveable：旋转屏幕保持）
+    var groupMode by rememberSaveable { mutableStateOf("time") }
 
     val filteredHistory = remember(activeHistory, typeFilter) {
         activeHistory.filter { h ->
@@ -126,7 +129,11 @@ fun HomeScreen(
             }
         }
     }
-            val groupOrder = listOf("今天", "昨天", "更早").filter { it in grouped }
+    val groupOrder = listOf("今天", "昨天", "更早").filter { it in grouped }
+
+    // 地址聚合分组（空地址归「未填地址」，码最多的地址排前）
+    val addressGroups: List<Pair<String, List<CodeHistory>>> =
+        remember(filteredHistory) { HomeGrouping.byAddress(filteredHistory) }
 
             LaunchedEffect(Unit) { vm.cleanExpired() }
 
@@ -197,6 +204,15 @@ fun HomeScreen(
             // FilterChips
             item {
                 FilterChipRow(currentFilter = typeFilter, onFilterChange = { typeFilter = it })
+            }
+
+            // 分组方式切换（按时间 / 按地址聚合）
+            item {
+                GroupModeToggle(
+                    mode = groupMode,
+                    onModeChange = { groupMode = it },
+                    modifier = Modifier.padding(top = 2.dp, bottom = 4.dp)
+                )
             }
 
             // 通知权限
@@ -378,19 +394,35 @@ fun HomeScreen(
                 }
             }
 
-            // 时间分组列表
-            groupOrder.forEach { groupLabel ->
-                item(key = "header_$groupLabel") {
-                    TimeGroupHeader(label = groupLabel)
+            // 列表：按地址聚合 / 按时间分组
+            if (groupMode == "address") {
+                addressGroups.forEach { (addr, groupItems) ->
+                    item(key = "addr_header_$addr") {
+                        AddressGroupHeader(address = addr.ifBlank { "未填地址" }, count = groupItems.size)
+                    }
+                    items(groupItems, key = { it.id }) { cardItem ->
+                        CodeHistoryCard(
+                            item = cardItem,
+                            onClick = { onItemClick(cardItem.id) },
+                            onDone = { markAsDone(cardItem) },
+                            onDelete = { markAsDone(cardItem) }
+                        )
+                    }
                 }
-                val groupItems = grouped[groupLabel] ?: emptyList()
-                items(groupItems, key = { it.id }) { item ->
-                    CodeHistoryCard(
-                        item = item,
-                        onClick = { onItemClick(item.id) },
-                        onDone = { markAsDone(item) },
-                        onDelete = { markAsDone(item) }
-                    )
+            } else {
+                groupOrder.forEach { groupLabel ->
+                    item(key = "header_$groupLabel") {
+                        TimeGroupHeader(label = groupLabel)
+                    }
+                    val groupItems = grouped[groupLabel] ?: emptyList()
+                    items(groupItems, key = { it.id }) { item ->
+                        CodeHistoryCard(
+                            item = item,
+                            onClick = { onItemClick(item.id) },
+                            onDone = { markAsDone(item) },
+                            onDelete = { markAsDone(item) }
+                        )
+                    }
                 }
             }
         }
