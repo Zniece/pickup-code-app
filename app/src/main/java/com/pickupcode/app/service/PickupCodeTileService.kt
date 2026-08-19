@@ -14,6 +14,11 @@ class PickupCodeTileService : TileService() {
     // 回主线程更新磁贴用（updateTile 必须在主线程）
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    // 磁贴状态检查用单线程执行器（复用，替代每次 onStartListening new 裸 Thread；daemon 不阻止进程退出）
+    private val stateExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "tile-state").apply { isDaemon = true }
+    }
+
     override fun onClick() {
         super.onClick()
         if (isAccessibilityEnabled()) {
@@ -43,7 +48,7 @@ class PickupCodeTileService : TileService() {
         super.onStartListening()
         // Low-2: 无障碍未启用时磁贴显示不可用（灰态），避免"看起来开着其实没反应"
         // Settings.Secure 读取涉及 Binder/IO，放子线程；磁贴更新回主线程
-        Thread {
+        stateExecutor.execute {
             val enabled = isAccessibilityEnabled()
             mainHandler.post {
                 qsTile?.apply {
@@ -55,6 +60,11 @@ class PickupCodeTileService : TileService() {
                     updateTile()
                 }
             }
-        }.start()
+        }
+    }
+
+    override fun onDestroy() {
+        stateExecutor.shutdown()
+        super.onDestroy()
     }
 }

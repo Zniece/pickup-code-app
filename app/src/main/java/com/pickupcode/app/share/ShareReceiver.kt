@@ -212,7 +212,13 @@ object ShareReceiver {
     fun handle(context: Context, intent: Intent?, scope: CoroutineScope) {
         if (intent == null) return
         val action = intent.action
-        if (action != Intent.ACTION_SEND && action != Intent.ACTION_PROCESS_TEXT) return
+        if (action != Intent.ACTION_SEND && action != Intent.ACTION_PROCESS_TEXT && action != Intent.ACTION_SEND_MULTIPLE) return
+
+        // 多图分享暂不支持：明确提示一条通知，不再静默丢弃无感知
+        if (action == Intent.ACTION_SEND_MULTIPLE) {
+            showMultiShareHint(context)
+            return
+        }
 
         scope.launch {
             val settings = withContext(Dispatchers.IO) {
@@ -278,14 +284,10 @@ object ShareReceiver {
             }
         } ?: return
 
-        // Save shared image as screenshot for detail page
-        val screenshotPath = withContext(Dispatchers.IO) {
-            ImageUtils.saveJpeg(context, "shared_images", "share", bitmap)
-        }
-
         // OCR + 券码检测（都在 recycle 前用同一张 bitmap）
         var lines: List<OCREngine.TextLine> = emptyList()
         var coupons: List<CouponDetector.CouponResult> = emptyList()
+        var ocrError = false
         withContext(Dispatchers.Default) {
             try {
                 lines = OCREngine.recognize(bitmap)
@@ -294,14 +296,28 @@ object ShareReceiver {
                 throw e
             } catch (e: Exception) {
                 Log.e(TAG, "OCR failed", e)
-            } finally {
-                if (!bitmap.isRecycled) bitmap.recycle()
+                ocrError = true
             }
         }
-        if (lines.isEmpty() && coupons.isEmpty()) {
-            Log.w(TAG, "分享图片识别无结果——OCR和条码检测均未返回内容")
+        if ((lines.isEmpty() && coupons.isEmpty()) || ocrError) {
+            // 识别无结果时不落盘截图：先识别后存图，避免空结果也产生孤儿 JPEG
+            // （与无障碍路径「识别成功后才保存」行为一致）
+            if (!bitmap.isRecycled) bitmap.recycle()
+            if (lines.isEmpty() && coupons.isEmpty()) {
+                Log.w(TAG, "分享图片识别无结果——OCR和条码检测均未返回内容")
+            }
             return
         }
+
+        // 识别到结果才保存共享图片（详情页截图用）
+        val screenshotPath = try {
+            withContext(Dispatchers.IO) {
+                ImageUtils.saveJpeg(context, "shared_images", "share", bitmap)
+            }
+        } finally {
+            if (!bitmap.isRecycled) bitmap.recycle()
+        }
+
         val allText = lines.joinToString(" ") { it.text }
         val address = AddressExtractor.extractAddress(lines, allText)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
@@ -349,18 +365,22 @@ object ShareReceiver {
         if (!hasCoupon) {
             // 正则主路径先行（问题3：分享路径接入 AI，但不阻塞）
             val regexResults = withContext(Dispatchers.Default) { CodeExtractor.extract(lines, context = context, source = "share") }
-            // 诊断日志：打印当前阈值 + 每个正则结果及其通过/被拒原因，便于定位 6 位纯数字码漏识别
-            Log.d(TAG, "正则提取结果 ${regexResults.size} 条，置信度阈值=${settings.confidenceThreshold}，" +
-                "取件=${settings.enableParcelCodes}/取餐=${settings.enableFoodCodes}/券=${settings.enableCouponCodes}")
+            // 诊断日志（候选码值/来源/阈值属 PII，仅 DEBUG 输出；release 不落）
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "正则提取结果 ${regexResults.size} 条，置信度阈值=${settings.confidenceThreshold}，" +
+                    "取件=${settings.enableParcelCodes}/取餐=${settings.enableFoodCodes}/券=${settings.enableCouponCodes}")
+            }
             for (re in regexResults) {
                 val confOk = re.confidence >= settings.confidenceThreshold
                 val typeOk = !isTypeDisabled(re.type, settings)
-                Log.d(TAG, "正则候选 code=${re.code} type=${re.type} conf=${re.confidence} " +
-                    "src=${re.source} → confOK=$confOk typeOK=$typeOk " +
-                    if (confOk && typeOk) "【通过】" else "【被拒：${buildString {
-                        if (!confOk) append("置信度${re.confidence}<阈值${settings.confidenceThreshold};")
-                        if (!typeOk) append("类型${re.type}已关闭;")
-                    }}】")
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "正则候选 code=${re.code} type=${re.type} conf=${re.confidence} " +
+                        "src=${re.source} → confOK=$confOk typeOK=$typeOk " +
+                        if (confOk && typeOk) "【通过】" else "【被拒：${buildString {
+                            if (!confOk) append("置信度${re.confidence}<阈值${settings.confidenceThreshold};")
+                            if (!typeOk) append("类型${re.type}已关闭;")
+                        }}】")
+                }
                 if (confOk && typeOk) {
                     allResults.add(re)
                 }
@@ -374,8 +394,10 @@ object ShareReceiver {
                 try {
                     val aiRes = aiDeferred.await()
                     if (aiRes.error != null) Log.w(TAG, "AI 识别失败: ${aiRes.error}")
-                    Log.d(TAG, "AI 识别返回 ${aiRes.results.size} 条: " +
-                        aiRes.results.joinToString { "${it.code}(${it.type})" })
+                    if (BuildConfig.DEBUG) {
+                        Log.d(TAG, "AI 识别返回 ${aiRes.results.size} 条: " +
+                            aiRes.results.joinToString { "${it.code}(${it.type})" })
+                    }
                     for (ai in aiRes.results) {
                         if (isTypeDisabled(ai.type, settings)) continue
                         if (allResults.any { it.code == ai.code && it.type == ai.type }) continue // 同码同type去重
@@ -426,9 +448,9 @@ object ShareReceiver {
                 scope.launch(Dispatchers.IO) {
                     try {
                         PostVerifier.verifyMap(context, address, settings.amapApiKey.ifBlank { null }) { conf, fmtAddr ->
-                            // M1: 定向更新 geo 字段，不动 code/address 等其他字段，避免覆盖用户编辑
-                            db.repository.findByCodeAndType(s.code, s.type.name)?.let { rec ->
-                                db.repository.updateGeo(rec.id, true, conf, fmtAddr ?: "")
+                            // 定向更新本次保存的 id（同码同类型并发新保存时 findByCodeAndType 会命中错误行）
+                            savedIdsByCode[s.code]?.let { id ->
+                                db.repository.updateGeo(id, true, conf, fmtAddr ?: "")
                             }
                         }
                     } catch (e: Exception) {
@@ -476,5 +498,34 @@ object ShareReceiver {
         CodeExtractor.CodeType.pickup_food -> !settings.enableFoodCodes
         CodeExtractor.CodeType.pickup_parcel -> !settings.enableParcelCodes
         CodeExtractor.CodeType.coupon -> !settings.enableCouponCodes
+    }
+
+    /** 多图分享提示（ACTION_SEND_MULTIPLE 暂不支持逐张处理，明确告知用户）。 */
+    private fun showMultiShareHint(context: Context) {
+        // Android 13+ 无通知权限时静默（与主通知路径一致）
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        try {
+            val nm = context.getSystemService(android.app.NotificationManager::class.java) ?: return
+            nm.createNotificationChannel(android.app.NotificationChannel(
+                "share_hint", "分享提示", android.app.NotificationManager.IMPORTANCE_DEFAULT))
+            nm.notify(
+                "share_multi".hashCode() and 0x7fffffff,
+                androidx.core.app.NotificationCompat.Builder(context, "share_hint")
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setContentTitle("码上闪记")
+                    .setContentText("暂不支持多图分享，请一次分享一张图片")
+                    .setAutoCancel(true)
+                    .setTimeoutAfter(5000)
+                    .build()
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "多图提示通知失败: ${e.message}")
+        }
     }
 }

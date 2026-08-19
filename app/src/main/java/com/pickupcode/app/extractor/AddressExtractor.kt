@@ -741,6 +741,13 @@ object AddressExtractor {
         return if (loc.addrFrom in HIGH_CONFIDENCE_SOURCES) fullAddress else ""
     }
 
+    /**
+     * 全屏地址是否为高置信文本证据来源（竞争仲裁判定，供管线复用）。
+     * 多码同屏时外层只需调用一次，避免每个码重复全量 [extractLocation] 扫描。
+     */
+    fun isHighConfidenceFullAddress(lines: List<OCREngine.TextLine>, allText: String): Boolean =
+        extractLocation(lines, allText).addrFrom in HIGH_CONFIDENCE_SOURCES
+
     /** 增强版：context 非空时优先匹配用户常用站点（参考同类产品实现 setCommonStations）。 */
     fun extractAddress(lines: List<OCREngine.TextLine>, allText: String, context: android.content.Context?): String {
         if (context == null) return extractAddress(lines, allText)

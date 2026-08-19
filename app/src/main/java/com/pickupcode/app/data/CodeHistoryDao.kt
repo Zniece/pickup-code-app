@@ -102,8 +102,9 @@ interface CodeHistoryDao {
     @Query("SELECT COUNT(*) FROM (SELECT 1 FROM code_history WHERE isActive = 1 GROUP BY code, type HAVING COUNT(*) >= 2)")
     suspend fun countDuplicateGroups(): Int
 
-    /** H6 去重的保存结果：id = 记录 id，existed = 是否命中已存在的活跃记录（用于通知去重提示）。 */
-    class SaveResult(val id: Long, val existed: Boolean)
+    /** H6 去重的保存结果：id = 记录 id，existed = 是否命中已存在的活跃记录（用于通知去重提示）。
+     *  replacedScreenshotPath：本次更新覆盖掉的旧截图路径（调用方负责删除该孤儿文件）。 */
+    class SaveResult(val id: Long, val existed: Boolean, val replacedScreenshotPath: String = "")
 
     /**
      * H6: 事务内原子化「查询已有 + 插入/更新」，避免多入口(分享/无障碍/手动)并发对同一 code+type
@@ -113,6 +114,10 @@ interface CodeHistoryDao {
     suspend fun saveOrUpdate(history: CodeHistory): SaveResult {
         val existing = findByCodeAndType(history.code, history.type)
         return if (existing != null) {
+            // 新截图将覆盖旧路径时，把旧路径带出去给调用方删除文件（否则旧截图成 cacheDir 孤儿）
+            val replaced = if (history.screenshotPath.isNotBlank() &&
+                existing.screenshotPath.isNotBlank() &&
+                history.screenshotPath != existing.screenshotPath) existing.screenshotPath else ""
             update(existing.copy(
                 source = if (history.source.isNotBlank()) history.source else existing.source,
                 pickupAddress = if (history.pickupAddress.isNotBlank()) history.pickupAddress else existing.pickupAddress,
@@ -129,7 +134,7 @@ interface CodeHistoryDao {
                 // 注意：geoVerified/geoConfidence/geoFormattedAddress 故意不在此合并——
                 // 它们由异步地图验证回调经 updateGeo() 定向写入，整行 copy 会把默认值覆盖掉已验证结果。
             ))
-            SaveResult(existing.id, true)
+            SaveResult(existing.id, true, replaced)
         } else {
             SaveResult(insert(history), false)
         }

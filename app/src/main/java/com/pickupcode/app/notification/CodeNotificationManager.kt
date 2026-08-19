@@ -38,18 +38,50 @@ object CodeNotificationManager {
         )
     }
 
-    /** RESULT_NOTIFY_ID（结果提示通知 0x7FFFFF00，见 PickupCodeAccessibilityService）保留段起点：递增 ID 池恒低于该值，绝不与其冲突。 */
-    private const val RESERVED_NOTIFY_ID = 0x7FFFFF00
+    /**
+     * 通知 id 空间划分（互不相交，杜绝各通知族互相覆盖）：
+     *  主通知池  1 .. 0x3FFFFFFF    （递增分配，持久化计数器）
+     *  提醒      0x40000000 .. 0x5FFFFEFF （code+type 哈希）
+     *  去重提示  0x60000000 .. 0x7FFFFEFF （code+type 哈希）
+     *  结果提示  0x7FFFFFFF         （PickupCodeAccessibilityService.RESULT_NOTIFY_ID，独占最高位）
+     * 提醒/去重两段统一用 % SEGMENT_MODULUS 截取，天然避开 0x7FFFFFFF。
+     */
+    private const val MAIN_NOTIFY_LIMIT = 0x40000000      // 主池上界（不含），池内 1..0x3FFFFFFF
+    private const val REMIND_SEGMENT_BASE = 0x40000000    // 提醒段基址
+    private const val DUP_SEGMENT_BASE = 0x60000000       // 去重段基址
+    private const val SEGMENT_MODULUS = 0x1FFFFFFF        // 段内取值模（避开 0x7FFFFFFF 结果通知位）
 
-    /** Medium-3: 确定性递增通知 id 池，替代 hashCode——不同取件码 hashCode 碰撞会导致通知互相覆盖。 */
-    private val idCounter = java.util.concurrent.atomic.AtomicInteger(1)
+    /** 主通知池 id 登记表：code+type → 展示中的通知 id 集合。
+     *  供「已取」按 code+type 取消全部相关通知（主通知 + 去重提示 + 提醒）。 */
+    private val activeNotifyIds = java.util.concurrent.ConcurrentHashMap<String, MutableSet<Int>>()
 
-    private fun nextNotifyId(): Int =
-        (idCounter.getAndIncrement() and 0x7fffffff) % RESERVED_NOTIFY_ID
+    private fun trackNotifyId(type: CodeExtractor.CodeType, code: String, id: Int) {
+        activeNotifyIds.getOrPut("$type:$code") { java.util.concurrent.ConcurrentHashMap.newKeySet() }.add(id)
+    }
+
+    /**
+     * 持久化递增通知 id：进程重启后计数器继续递增，避免从 1 重新计数后新通知
+     * 静默覆盖仍在通知栏的旧常驻通知（用户丢失未处理的取件提醒展示）。
+     */
+    private fun nextNotifyId(context: Context): Int {
+        val sp = context.getSharedPreferences("notif_state", Context.MODE_PRIVATE)
+        val counter = sp.getInt("notify_id_counter", 1)
+        val id = ((counter and 0x7fffffff) % (MAIN_NOTIFY_LIMIT - 1)) + 1   // 1..0x3FFFFFFF
+        sp.edit().putInt("notify_id_counter", (counter + 1) and 0x7fffffff).apply()
+        return id
+    }
 
     /** 稳定请求码/提醒 id：基于 code+type 复合，减少短码 hashCode 碰撞，并校正非负（保留给 PendingIntent 请求码与提醒通知 ID 空间）。 */
     private fun safeId(type: CodeExtractor.CodeType, code: String): Int =
         ("$type:$code".hashCode() and 0x7fffffff)
+
+    /** 提醒通知 id：提醒段内哈希（0x40000000..0x5FFFFEFF）。 */
+    private fun remindNotifyId(type: CodeExtractor.CodeType, code: String): Int =
+        ((safeId(type, code) and 0x7fffffff) % SEGMENT_MODULUS) or REMIND_SEGMENT_BASE
+
+    /** 去重提示通知 id：去重段内哈希（0x60000000..0x7FFFFEFF）。 */
+    private fun dupNotifyId(type: CodeExtractor.CodeType, code: String): Int =
+        ((safeId(type, code) and 0x7fffffff) % SEGMENT_MODULUS) or DUP_SEGMENT_BASE
 
     /** 提醒闹钟请求码：按 kind 分到不同段位，避免同码「稍后提醒」与「到期提醒」共用请求码互相覆盖。
      *  later → [0x20000000, 0x5fffffff]，expiry → [0x40000000, 0x7fffffff]，两段互斥。 */
@@ -80,7 +112,8 @@ object CodeNotificationManager {
 
         val pendingIntent = launchPendingIntent(context)
 
-        val nid = nextNotifyId()
+        val nid = nextNotifyId(context)
+        trackNotifyId(type, code, nid)
         val notification = NotificationCompat.Builder(context, channelId)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle("$iconLabel $title")
@@ -111,14 +144,22 @@ object CodeNotificationManager {
         nm.notify(nid, notification)
     }
 
-    fun dismiss(context: Context, type: CodeExtractor.CodeType, code: String) {
+    /**
+     * 按 code+type 取消该码的全部相关通知：登记表内主通知 + 去重提示 + 提醒。
+     * 修复 DoneReceiver 场景：同码同时存在主通知与重复提示（不同 id）时，「已取」
+     * 不再只取消被点击的那一条，另一条残留指向已归档数据的问题。
+     */
+    fun dismissByCodeAndType(context: Context, type: CodeExtractor.CodeType, code: String) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        nm.cancel(safeId(type, code))
+        activeNotifyIds.remove("$type:$code")?.forEach { nm.cancel(it) }
+        nm.cancel(dupNotifyId(type, code))
+        nm.cancel(remindNotifyId(type, code))
     }
 
     fun dismissById(context: Context, id: Int) {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         nm.cancel(id)
+        activeNotifyIds.values.forEach { it.remove(id) }
     }
 
     // ---------------------------------------------------------------
@@ -197,8 +238,8 @@ object CodeNotificationManager {
                 .setContentIntent(pendingIntent)
                 .build()
             val manager = context.getSystemService(NotificationManager::class.java) ?: return
-            // 用独立 ID 空间，避免覆盖同码原始通知
-            manager.notify((safeId(type, code) and 0x7fffffff) or 0x40000000, notification)
+            // 提醒段独立 id 空间，不覆盖主通知/去重提示/结果提示
+            manager.notify(remindNotifyId(type, code), notification)
         } catch (e: Exception) { Log.w("CodeNotification", "提醒通知构建失败", e) }
     }
 
@@ -251,7 +292,7 @@ object CodeNotificationManager {
             .build()
 
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
-        // 去重提示用独立 id（code+type 复合），避免与主通知 id 冲突
-        nm.notify(("dup_${type.name}_$code").hashCode() and 0x7fffffff, notification)
+        // 去重提示用独立 id 段（code+type 复合），避免与主通知/提醒/结果提示冲突
+        nm.notify(dupNotifyId(type, code), notification)
     }
 }

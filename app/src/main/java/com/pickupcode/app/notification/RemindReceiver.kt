@@ -3,11 +3,13 @@ package com.pickupcode.app.notification
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import com.pickupcode.app.extractor.CodeExtractor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /** C3: 稍后提醒/到期提醒 —— 收到 AlarmManager 定时广播后，复查状态并推提醒通知。 */
 class RemindReceiver : BroadcastReceiver() {
@@ -26,10 +28,21 @@ class RemindReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         scope.launch {
             try {
-                val dao = com.pickupcode.app.data.AppDatabase.getInstance(context).codeHistoryDao()
-                val activeCount = runCatching { dao.countActiveByCodeAndType(code, type.name) }.getOrDefault(0)
-                if (activeCount > 0) {
-                    CodeNotificationManager.showReminder(context, code, type, source, kind)
+                // 限时完成：冷启动 Room 首次查询若超时（goAsync ~10s 上限），放弃本次提醒而非被系统回收
+                withTimeoutOrNull(8000) {
+                    val dao = com.pickupcode.app.data.AppDatabase.getInstance(context).codeHistoryDao()
+                    // directBootAware 场景：开机未解锁时 CE 存储的 DB 不可用 → 无法复查。
+                    // 此时宁可在解锁后补弹一次（真取过的码其闹钟已被「已取」cancelRemind 取消，
+                    // 残留闹钟罕见），也不让提醒静默丢失。
+                    val activeCount = try {
+                        dao.countActiveByCodeAndType(code, type.name)
+                    } catch (e: Exception) {
+                        Log.w("RemindReceiver", "直启引导阶段 DB 不可用，按未知处理", e)
+                        -1
+                    }
+                    if (activeCount != 0) {
+                        CodeNotificationManager.showReminder(context, code, type, source, kind)
+                    }
                 }
             } finally {
                 pendingResult.finish()

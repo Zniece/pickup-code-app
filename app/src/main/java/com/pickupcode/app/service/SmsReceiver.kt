@@ -5,13 +5,12 @@ import android.content.Context
 import android.content.Intent
 import android.telephony.SmsMessage
 import android.util.Log
+import com.pickupcode.app.App
 import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.extractor.AddressExtractor
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -51,17 +50,20 @@ class SmsReceiver : BroadcastReceiver() {
         val displaySender = if (sender.length > 4) "***${sender.takeLast(4)}" else sender
         val rawSnippet = "[短信] $displaySender | $body"
 
-        // 节流：同内容 30s 内不重复处理
+        // 节流：同内容 30s 内不重复处理（持久化到 SharedPreferences——
+        // 进程被杀后重投/补发同一条短信时，进程内静态量已归零，会再次走完整管线）
         val now = System.currentTimeMillis()
-        if (now - lastProcessTime < THROTTLE_MS && lastBody == body) {
+        val (lastTime, lastBodyHash) = readThrottle(context)
+        val bodyHash = "${body.length}:${body.hashCode()}"
+        if (now - lastTime < THROTTLE_MS && lastBodyHash == bodyHash) {
             Log.d(TAG, "短信节流跳过（同内容重复）")
             return
         }
-        lastProcessTime = now
-        lastBody = body
+        writeThrottle(context, now, bodyHash)
 
         val pending = goAsync()
-        CoroutineScope(Dispatchers.IO).launch {
+        // 复用应用级协程作用域，不再每次广播新建 CoroutineScope（减少临时对象；App.appScope 生命周期与进程一致）
+        App.appScope.launch {
             try {
                 // H5: goAsync 必须限时完成（广播接收器超时会被系统回收），8s 未完成即放弃，finally 仍会 finish
                 withTimeoutOrNull(8000) {
@@ -82,8 +84,10 @@ class SmsReceiver : BroadcastReceiver() {
 
                     val allText = lines.joinToString(" ") { it.text }
                     val results = CodeExtractor.extract(lines, context = context, source = "sms")
+                    // 逐类型过滤：用户单独关闭「取餐码」/「取件码」时，该类型短信不得入库+通知
+                    // （与无障碍路径 isTypeEnabled、分享路径 isTypeDisabled 行为对齐）
                     val allResults = results.filter {
-                        it.confidence >= settings.confidenceThreshold
+                        it.confidence >= settings.confidenceThreshold && isTypeEnabled(it.type, settings)
                     }
                     if (allResults.isEmpty()) {
                         Log.d(TAG, "短信无取件码，跳过")
@@ -122,10 +126,26 @@ class SmsReceiver : BroadcastReceiver() {
         }
     }
 
+    /** 该类型是否被用户开启（与无障碍路径 isTypeEnabled 对齐）。 */
+    private fun isTypeEnabled(type: CodeExtractor.CodeType, settings: AppPreferences.Settings): Boolean = when (type) {
+        CodeExtractor.CodeType.pickup_food -> settings.enableFoodCodes
+        CodeExtractor.CodeType.pickup_parcel -> settings.enableParcelCodes
+        CodeExtractor.CodeType.coupon -> settings.enableCouponCodes
+    }
+
+    /** 节流状态持久化读写（进程重启后仍生效）。存 body 的「长度:hash」而非原文，避免长短信占空间。 */
+    private fun readThrottle(context: Context): Pair<Long, String> {
+        val sp = context.getSharedPreferences("sms_throttle", Context.MODE_PRIVATE)
+        return sp.getLong("last_time", 0L) to (sp.getString("last_body", "") ?: "")
+    }
+
+    private fun writeThrottle(context: Context, time: Long, bodyHash: String) {
+        context.getSharedPreferences("sms_throttle", Context.MODE_PRIVATE)
+            .edit().putLong("last_time", time).putString("last_body", bodyHash).apply()
+    }
+
     private companion object {
         const val TAG = "SmsReceiver"
         const val THROTTLE_MS = 30_000L
-        @Volatile var lastProcessTime = 0L
-        @Volatile var lastBody = ""
     }
 }

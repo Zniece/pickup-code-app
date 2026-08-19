@@ -57,6 +57,11 @@ object RecognitionPipeline {
     ): List<SavedCode> {
         val saved = mutableListOf<SavedCode>()
         val seen = mutableSetOf<String>()
+        // 全屏地址竞争仲裁只算一次：多码同屏时避免每个码都跑一遍全量 extractLocation（N 码 = N 次全量扫描）
+        val fullAddrHighConf = fullAddress.isNotBlank() &&
+            AddressExtractor.isHighConfidenceFullAddress(lines, allText)
+        // 柜号与码无关，同屏只提取一次（仅在有取件码时使用）
+        var cabinetCache: String? = null
         for ((code, type) in allResults) {
             val key = "$code|$type"
             if (key in seen) continue
@@ -65,10 +70,16 @@ object RecognitionPipeline {
 
             // 逐码窗口地址；竞争仲裁：窗口优先，全屏仅高置信来源采信（防多通知串台）
             val perCodeAddr = AddressExtractor.extractAddressForCode(lines, code)
-            val effAddr = AddressExtractor.resolveAddress(lines, allText, perCodeAddr, fullAddress)
+            val effAddr = when {
+                perCodeAddr.isNotBlank() -> perCodeAddr
+                fullAddrHighConf -> fullAddress
+                else -> ""
+            }
             // 独立柜号（仅取件码）
-            val cabinet = if (type == CodeExtractor.CodeType.pickup_parcel)
-                AddressExtractor.extractCabinetNumber(lines, allText) else ""
+            val cabinet = if (type == CodeExtractor.CodeType.pickup_parcel) {
+                if (cabinetCache == null) cabinetCache = AddressExtractor.extractCabinetNumber(lines, allText)
+                cabinetCache!!
+            } else ""
 
             // 到期时刻（v6）：快递码算提醒时刻；取餐/券码恒为 0 不提醒
             val expiryTime = ExpiryExtractor.expiryTimeFor(rawSnippet, type, timestamp) ?: 0L
@@ -86,10 +97,15 @@ object RecognitionPipeline {
                 timestamp = timestamp,
                 expiryTime = expiryTime
             ))
+            // 覆盖更新的旧截图成孤儿文件（系统清理前不回收），立即删除
+            if (save.replacedScreenshotPath.isNotBlank()) {
+                try { java.io.File(save.replacedScreenshotPath).delete() } catch (_: Exception) {}
+            }
             saved.add(SavedCode(code, type, source, save.id, save.existed, effAddr))
 
-            // 到期提醒排程：仅快递码且非重复入库时安排（重复同码会覆盖旧闹钟，见 scheduleRemind FLAG_UPDATE_CURRENT）
-            if (expiryTime > 0 && !save.existed && AppPreferences.isExpiryRemindEnabled(context)) {
+            // 到期提醒排程：重复识别（existed）也重排——同码第二条短信可能带来新时限，
+            // 若只在 !existed 时排程会漏掉更新后的提醒（FLAG_UPDATE_CURRENT 天然覆盖旧闹钟）
+            if (expiryTime > 0 && AppPreferences.isExpiryRemindEnabled(context)) {
                 CodeNotificationManager.scheduleExpiryReminder(context, code, type, source, expiryTime)
             }
 

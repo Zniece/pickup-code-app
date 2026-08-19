@@ -37,26 +37,31 @@ object ShareStatsCard {
 
     private fun doShare(context: Context, stats: PatternLearner.PatternStats) {
         val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bmp)
-        drawPoster(canvas, stats)
-
-        val file = File(context.cacheDir, "stats_card.png")
         try {
-            FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
-        } finally {
-            bmp.recycle()
-        }
+            val canvas = Canvas(bmp)
+            drawPoster(canvas, stats)
 
-        val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
-        val send = Intent(Intent.ACTION_SEND).apply {
-            type = "image/png"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)   // 允许从非 Activity context / 后台线程安全启动
-            putExtra(Intent.EXTRA_TEXT, "我的取件/取餐码识别成绩单 📊")
+            // 放专属子目录并建 .nomedia：避免部分 ROM 媒体扫描把成绩卡收进相册
+            val dir = File(context.cacheDir, "share_card")
+            dir.mkdirs()
+            File(dir, ".nomedia").createNewFile()
+            val file = File(dir, "stats_card.png")
+            FileOutputStream(file).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+
+            val uri = FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "image/png"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)   // 允许从非 Activity context / 后台线程安全启动
+                putExtra(Intent.EXTRA_TEXT, "我的取件/取餐码识别成绩单 📊")
+            }
+            val chooser = Intent.createChooser(send, "分享成绩卡").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(chooser)
+        } finally {
+            // 创建→绘制→压缩 任意一步抛异常都回收位图（约 6.7MB），避免泄漏
+            if (!bmp.isRecycled) bmp.recycle()
         }
-        val chooser = Intent.createChooser(send, "分享成绩卡").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        context.startActivity(chooser)
     }
 
     private fun drawPoster(c: Canvas, s: PatternLearner.PatternStats) {

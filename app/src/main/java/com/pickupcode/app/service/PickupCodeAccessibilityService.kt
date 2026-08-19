@@ -27,6 +27,7 @@ import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
 import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.first
 import java.io.File
@@ -38,8 +39,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     companion object {
         private const val TAG = "PickupCodeA11y"
         private const val CHANNEL_ID = "pickup_code_result"
-        // M12: 结果提示通知用独立保留 id 段（safeId 是 hash&0x7fffffff，此处用固定高位几乎不冲突）
-        private const val RESULT_NOTIFY_ID = 0x7FFFFF00
+        // 结果提示通知 id：占最高位 0x7FFFFFFF，与主通知池(1..0x3FFFFFFF)/提醒(0x4..)/去重(0x6..) 三段互不相交（M12）
+        private const val RESULT_NOTIFY_ID = 0x7FFFFFFF
 
         @JvmField
         val triggerRequested = AtomicBoolean(false)
@@ -51,12 +52,23 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         )
     }
 
-    // 实例级协程作用域：随服务实例创建/销毁，onUnbind 时 cancel 避免跨重建累积泄漏（H2）
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
+    /** 顶层协程异常兜底：SupervisorJob 不吞子协程异常，无 handler 时任何未捕获异常都会崩进程。
+     *  挂到 scope 上兜住所有 launch 子协程（节点遍历/验证/回填等），记日志 + 提示，不再崩溃。 */
+    private val exceptionHandler = CoroutineExceptionHandler { _, e ->
+        if (e is CancellationException) return@CoroutineExceptionHandler
+        Log.e(TAG, "协程未捕获异常", e)
+        showResult("识别出错")
+    }
+
+    // 实例级协程作用域：随服务实例创建/销毁，onUnbind 时 cancel 避免跨重建累积泄漏（H2）。
+    // 注意：服务实例在 onUnbind 后会被系统复用（再次 onServiceConnected）——因此必须 var，
+    // 在 onServiceConnected 里检测失效后重建，否则关一次无障碍再开会永久空转（Top1 修复）。
+    private var scope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
     // 复用单例主线程 Handler：heartbeat 自续 + onAccessibilityEvent 延时调度共用，便于统一 removeCallbacks（H3/M2）
     private val mainHandler = Handler(Looper.getMainLooper())
-    // 截图回调线程池：模块级单例，避免每次 captureAndExtract 新建线程泄漏（M7）
-    private val screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    // 截图回调线程池：模块级单例，避免每次 captureAndExtract 新建线程泄漏（M7）。
+    // 同 scope：onUnbind shutdownNow 后需在重连时重建（Top1 修复）。
+    private var screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
     /** 异步释放 ML Kit 客户端。close() 会等待在途识别/检测完成（最长 30s/10s），
      *  不能在 onUnbind/onDestroy 主线程里同步阻塞（ANR 风险）。 */
@@ -74,6 +86,11 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         super.onServiceConnected()
         Log.d(TAG, "无障碍服务已连接")
 
+        // Top1: 服务实例可能在 onUnbind 后复用（用户关→开无障碍、系统临时解绑均会再次走到这里）。
+        // 上一轮 onUnbind 已 cancel scope / shutdown executor，必须重建，否则识别功能静默全废。
+        if (!scope.isActive) scope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
+        if (screenshotExecutor.isShutdown) screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
         val info = AccessibilityServiceInfo().apply {
             // Medium-1: 只注册 WINDOW_STATE_CHANGED（服务只消费该事件），减少无关事件唤醒
             eventTypes = AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED
@@ -85,6 +102,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
         serviceInfo = info
 
+        // 重连时先清掉可能残留的心跳任务，避免双心跳叠加
+        mainHandler.removeCallbacks(heartbeat)
         mainHandler.postDelayed(heartbeat, 3000)
     }
 
@@ -154,12 +173,24 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
     /** 仅节点文字模式（API < 30兜底），不存截图 */
     private fun performScanFromText(source: String) {
-        // 无障碍树递归 + 正则 + 学习文件 IO 均放 IO/Default，避免旧设备主线程卡顿
-        scope.launch(Dispatchers.Default) {
-            val settings = AppPreferences.observe(this@PickupCodeAccessibilityService).first()
-            val allText = collectAllText()
-            val lines = allText.lines().map { OCREngine.TextLine(it, null, null) }
-            tryExtract(allText, lines, null, settings, source)
+        scope.launch {
+            try {
+                val settings = AppPreferences.observe(this@PickupCodeAccessibilityService).first()
+                // 无障碍节点树遍历必须在主线程（AccessibilityNodeInfo 跨线程使用无官方保证，
+                // 部分 ROM/窗口销毁竞态下在后台线程遍历会抛异常崩进程）
+                val allText = withContext(Dispatchers.Main) { collectAllText() }
+                val lines = allText.lines().map { OCREngine.TextLine(it, null, null) }
+                // 正则/提取等 CPU 密集工作在 Default 线程
+                withContext(Dispatchers.Default) {
+                    tryExtract(allText, lines, null, settings, source)
+                }
+            } catch (e: CancellationException) {
+                throw e // 取消必须重抛
+            } catch (e: Exception) {
+                // 顶层兜底：节点遍历/提取偶发异常只记日志 + 提示，不再直达未捕获处理器崩进程
+                Log.e(TAG, "文本识别失败", e)
+                showResult("识别出错")
+            }
         }
     }
 
@@ -203,7 +234,20 @@ class PickupCodeAccessibilityService : AccessibilityService() {
                             ?: return showResult("截屏失败")
                         // 深拷贝为普通位图：wrapHardwareBuffer 返回的位图依赖 buf 存活，
                         // 若在 OCR 异步读取前 close buf 会读到已释放缓冲。拷贝后即可安全 close（H1）
-                        val bmp = hwBmp.copy(Bitmap.Config.ARGB_8888, false)
+                        // 内存峰值控制：全分辨率 1:1 copy 会与原图同时存活（2× 屏幕内存，4K 屏约 66MB）。
+                        // 拷贝时直接降采样到长边 ≤1920px（取件码/地址文本 OCR 足够），峰值显著下降。
+                        val maxDim = 1920f
+                        val scale = minOf(1f, maxDim / maxOf(hwBmp.width, hwBmp.height))
+                        val bmp = if (scale < 1f) {
+                            Bitmap.createScaledBitmap(
+                                hwBmp,
+                                (hwBmp.width * scale).toInt().coerceAtLeast(1),
+                                (hwBmp.height * scale).toInt().coerceAtLeast(1),
+                                true
+                            )
+                        } else {
+                            hwBmp.copy(Bitmap.Config.ARGB_8888, false)
+                        }
                         hwBmp.recycle()
 
                         scope.launch(Dispatchers.IO) {
@@ -401,13 +445,29 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         // Medium-2: 自动扫描时静默（仅日志），不弹"未识别"通知
         if (!silent) {
             if (settings.enableAI && settings.apiKey.isNotBlank()) {
-                if (aiErr != null) showResult("未识别到取餐码/取件码 · AI识别失败(${aiErr.take(40)})")
+                // PII/端点防护：AI 错误原文可能含 URL/端点细节，不直接进用户通知，
+                // 只映射成类别文案（原始错误仍会经 mergeAiResults 落 Log.w 供排查）
+                if (aiErr != null) showResult("未识别到取餐码/取件码 · ${categorizeAiError(aiErr)}")
                 else showResult("未识别到取餐码/取件码")
             } else {
                 showResult("未识别到取餐码/取件码")
             }
         }
         return true
+    }
+
+    /** AI 错误原文 → 用户可读类别文案（不进通知的原始细节只写日志）。 */
+    private fun categorizeAiError(err: String): String {
+        val e = err.lowercase()
+        return when {
+            e.contains("timeout") || e.contains("timed out") -> "AI服务超时"
+            e.contains("401") || e.contains("unauthorized") || e.contains("api key") || e.contains("invalid key") -> "AI密钥无效"
+            e.contains("429") || e.contains("rate limit") || e.contains("too many") -> "AI请求过于频繁"
+            e.contains("404") || e.contains("model") -> "AI模型不可用"
+            e.contains("connect") || e.contains("network") || e.contains("socket") ||
+                e.contains("unreachable") || e.contains("refused") || e.contains("resolve") -> "网络连接失败"
+            else -> "AI识别失败"
+        }
     }
 
     /** ⑥ 冲突检测：同码同时匹配取餐/取件类型时返回该码（提示用户确认）。 */

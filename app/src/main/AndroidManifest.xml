@@ -37,6 +37,13 @@
                 <data android:mimeType="image/*" />
             </intent-filter>
 
+            <!-- 多图分享（ACTION_SEND_MULTIPLE）：进入后给提示，避免静默丢弃无感知 -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+
             <!-- Text selection menu (standard Android long-press floating toolbar) -->
             <intent-filter>
                 <action android:name="android.intent.action.PROCESS_TEXT" />
@@ -75,7 +82,8 @@
 
         <receiver
             android:name=".notification.RemindReceiver"
-            android:exported="false" />
+            android:exported="false"
+            android:directBootAware="true" />
 
         <!-- Quick Settings tile -->
         <service
