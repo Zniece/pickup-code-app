@@ -123,4 +123,68 @@ class AddressExtractorTest {
         val allText = lines.joinToString(" ") { it.text }
         return AddressExtractor.extractAddress(lines, allText)
     }
+
+    // ---------------------------------------------------------------
+    // resolveAddress — 竞争仲裁（单码误伤回归：2026-08-21 模拟器实测 DB 落空复现）
+    // ---------------------------------------------------------------
+
+    /** 复现输入：整行含「包裹」被窗口 P3 排除（perCodeAddr 为空），全屏仅 S9 括号命中「建设南路」。 */
+    private fun parenReproLines(): List<com.pickupcode.app.ocr.OCREngine.TextLine> = listOf(
+        com.pickupcode.app.ocr.OCREngine.TextLine(
+            text = "取件码281849，您的包裹已暂存（建设南路），请及时领取",
+            boundingBox = null,
+            confidence = 1.0f
+        )
+    )
+
+    @Test
+    @DisplayName("S9 括号地址属低置信来源（仲裁 gate 的事实前提）")
+    fun resolveAddress_parenSourceIsLowConfidence() {
+        val ls = parenReproLines()
+        val allText = ls.joinToString(" ") { it.text }
+        assertEquals("建设南路", AddressExtractor.extractAddress(ls, allText), "全屏应提取到地址")
+        assertFalse(AddressExtractor.isHighConfidenceFullAddress(ls, allText), "S9-paren 不在高置信来源集")
+        assertTrue(AddressExtractor.extractAddressForCode(ls, "281849").isBlank(), "窗口不应命中（整行含排除词）")
+    }
+
+    @Test
+    @DisplayName("single-code screen keeps low-confidence full address (regression)")
+    fun resolveAddress_singleCodeKeepsFallback() {
+        val ls = parenReproLines()
+        val allText = ls.joinToString(" ") { it.text }
+        val addr = AddressExtractor.resolveAddress(ls, allText, "", "建设南路", multiCodeOnScreen = false)
+        assertEquals("建设南路", addr, "单码同屏不得丢弃全屏兜底地址")
+    }
+
+    @Test
+    @DisplayName("multi-code screen still suppresses low-confidence full address")
+    fun resolveAddress_multiCodeSuppressesLowConfidence() {
+        val ls = parenReproLines()
+        val allText = ls.joinToString(" ") { it.text }
+        val addr = AddressExtractor.resolveAddress(ls, allText, "", "建设南路", multiCodeOnScreen = true)
+        assertEquals("", addr, "多码同屏低置信来源宁缺毋滥")
+    }
+
+    @Test
+    @DisplayName("multi-code screen keeps high-confidence full address")
+    fun resolveAddress_multiCodeKeepsHighConfidence() {
+        val ls = listOf(
+            com.pickupcode.app.ocr.OCREngine.TextLine("取件码281849", null, 1.0f),
+            com.pickupcode.app.ocr.OCREngine.TextLine("已放至建设南路菜鸟驿站", null, 1.0f)
+        )
+        val allText = ls.joinToString(" ") { it.text }
+        val full = AddressExtractor.extractAddress(ls, allText)
+        assertTrue(full.contains("建设南路"), "S5 应提取到地址, got: $full")
+        val addr = AddressExtractor.resolveAddress(ls, allText, "", full, multiCodeOnScreen = true)
+        assertEquals(full, addr, "多码同屏高置信来源照常采信")
+    }
+
+    @Test
+    @DisplayName("window address always wins over full-screen fallback")
+    fun resolveAddress_windowAlwaysWins() {
+        val ls = parenReproLines()
+        val allText = ls.joinToString(" ") { it.text }
+        val addr = AddressExtractor.resolveAddress(ls, allText, "育新路25号", "建设南路", multiCodeOnScreen = false)
+        assertEquals("育新路25号", addr)
+    }
 }

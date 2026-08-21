@@ -727,16 +727,21 @@ object AddressExtractor {
      * 竞争仲裁：合并窗口地址与全屏地址。
      * @param perCodeAddr [extractAddressForCode] 的窗口定位结果（可能为空）
      * @param fullAddress 全屏 [extractLocation] 的兜底结果（可能为空）
-     * @return 最终地址；窗口地址优先，全屏仅高置信来源采信
+     * @param multiCodeOnScreen 是否多码同屏。多码时几何兜底型来源（S7~S10）可能抓到别的
+     *   通知的地址（串台），仅采信文本证据型来源，宁缺毋滥；单码时全屏地址必然属于本卡，
+     *   几何兜底照常采信。
+     * @return 最终地址；窗口地址优先，全屏按上述规则采信
      */
     fun resolveAddress(
         lines: List<OCREngine.TextLine>,
         allText: String,
         perCodeAddr: String,
-        fullAddress: String
+        fullAddress: String,
+        multiCodeOnScreen: Boolean = false
     ): String {
         if (perCodeAddr.isNotBlank()) return perCodeAddr
         if (fullAddress.isBlank()) return ""
+        if (!multiCodeOnScreen) return fullAddress
         val loc = extractLocation(lines, allText)
         return if (loc.addrFrom in HIGH_CONFIDENCE_SOURCES) fullAddress else ""
     }

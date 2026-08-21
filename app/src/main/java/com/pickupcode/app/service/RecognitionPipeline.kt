@@ -57,9 +57,12 @@ object RecognitionPipeline {
     ): List<SavedCode> {
         val saved = mutableListOf<SavedCode>()
         val seen = mutableSetOf<String>()
-        // 全屏地址竞争仲裁只算一次：多码同屏时避免每个码都跑一遍全量 extractLocation（N 码 = N 次全量扫描）
-        val fullAddrHighConf = fullAddress.isNotBlank() &&
-            AddressExtractor.isHighConfidenceFullAddress(lines, allText)
+        // 全屏兜底仲裁只算一次（避免多码同屏每码重跑全量 extractLocation）：
+        // 单码同屏全屏地址必然属于本卡，几何兜底照常采信；多码同屏防串台仅采信文本证据型来源
+        val fallbackAddr = AddressExtractor.resolveAddress(
+            lines, allText, perCodeAddr = "", fullAddress = fullAddress,
+            multiCodeOnScreen = allResults.distinctBy { "${it.first}|${it.second}" }.size > 1
+        )
         // 柜号与码无关，同屏只提取一次（仅在有取件码时使用）
         var cabinetCache: String? = null
         for ((code, type) in allResults) {
@@ -68,13 +71,9 @@ object RecognitionPipeline {
             seen.add(key)
             val source = codeSources[code] ?: "unknown"
 
-            // 逐码窗口地址；竞争仲裁：窗口优先，全屏仅高置信来源采信（防多通知串台）
+            // 逐码窗口地址优先；窗口未命中时回退到仲裁后的全屏兜底地址
             val perCodeAddr = AddressExtractor.extractAddressForCode(lines, code)
-            val effAddr = when {
-                perCodeAddr.isNotBlank() -> perCodeAddr
-                fullAddrHighConf -> fullAddress
-                else -> ""
-            }
+            val effAddr = perCodeAddr.ifBlank { fallbackAddr }
             // 独立柜号（仅取件码）
             val cabinet = if (type == CodeExtractor.CodeType.pickup_parcel) {
                 if (cabinetCache == null) cabinetCache = AddressExtractor.extractCabinetNumber(lines, allText)
