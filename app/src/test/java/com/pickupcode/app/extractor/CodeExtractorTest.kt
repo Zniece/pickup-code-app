@@ -253,4 +253,46 @@ class CodeExtractorTest {
             "无取餐信号的金融通知仍应拦截"
         )
     }
+
+    @Test
+    @DisplayName("团购券截图带『到店消费』不被金融闸门误杀（券号信号放行）")
+    fun financial_gate_keeps_coupon_context() {
+        assertFalse(
+            CodeExtractor.isFinancialNoise("请在2026.10.04前到店消费 本单有惊喜 还可获得5元无门槛券 券号1242 10464170 754 复制"),
+            "带券号的团购券截图不应判为金融噪音"
+        )
+        assertTrue(
+            CodeExtractor.isFinancialNoise("周三到店消费享5折，信用卡支付满减"),
+            "无券码信号的到店消费营销文本仍应拦截"
+        )
+    }
+
+    @Test
+    @DisplayName("券号长数字（OCR 空格分隔）提取为券码，且不残留 parcel 部分码")
+    fun extract_coupon_number_spaced() {
+        val r = CodeExtractor.extract(listOf(
+            line("请在2026.10.04前到店消费 券号1242 10464170 754·复制"),
+            line("查看订单 购买成功")
+        ))
+        val coupon = r.filter { it.type == CodeExtractor.CodeType.coupon }
+        assertEquals(listOf("124210464170754"), coupon.map { it.code }, "应还原完整券号")
+        assertTrue(
+            r.none { it.type != CodeExtractor.CodeType.coupon },
+            "不应残留其他类型的部分码（如 parcel 1242）: ${r.map { it.code }}"
+        )
+    }
+
+    @Test
+    @DisplayName("短券号（券号 123456 到店使用）提取为券码")
+    fun extract_coupon_number_short() {
+        val r = CodeExtractor.extract(listOf(line("券号 123456 到店使用")))
+        assertEquals(listOf("123456"), r.filter { it.type == CodeExtractor.CodeType.coupon }.map { it.code })
+    }
+
+    @Test
+    @DisplayName("券号噪声（全0/4连重复）不提取")
+    fun extract_coupon_number_noise() {
+        val r = CodeExtractor.extract(listOf(line("券号 000000 到店使用")))
+        assertTrue(r.isEmpty(), "全0券号应被内容噪声检查拒绝: ${r.map { it.code }}")
+    }
 }

@@ -29,9 +29,12 @@ object CodeExtractor {
     private val LETTER_DASH_THREE_PARCEL = Regex("(?<![\\dA-Za-z])([A-Za-z])-(\\d{3,4})(?![\\dA-Za-z])", RegexOption.IGNORE_CASE)
     private val LETTER_NUMBER_FOOD = Regex("(?<![\\dA-Za-z])([A-Z]\\s*[-]?\\s*\\d{2,4})(?![\\dA-Za-z])", RegexOption.IGNORE_CASE)
     private val PURE_NUMBER_FOOD = Regex("(?<![\\dA-Za-z-])(\\d{2,5})(?![\\dA-Za-z])")
-    private val PREFIXED_CODE = Regex("(取[餐件货单]码|取餐号|取单号|排号|券号|提取码)[:：]?\\s*(?:为|是)?\\s*([A-Za-z0-9\\-]{2,12})")
+    private val PREFIXED_CODE = Regex("(取[餐件货单]码|取餐号|取单号|排号|提取码)[:：]?\\s*(?:为|是)?\\s*([A-Za-z0-9\\-]{2,12})")
+    // 券号（团购券/到店券的数字券码）：OCR 常按字符间隙拆出空格（券号1242 10464170 754），
+    // 贪婪捕获整段后去空格/间隔点还原完整码；PREFIXED/PING 不再管券号（12 位上限且类型错）。
+    private val COUPON_NUMBER = Regex("券号[:：]?\\s*([\\d][\\d\\s·.]{3,28}[\\d])")
     // 菜鸟/驿站类通知标准句式：凭1-6-5020到...取（件）；容忍 OCR 在码值与方位词间插入空格
-    private val PING_CODE = Regex("(?:凭|好评码|提取码|券号)[:：]?\\s*([A-Za-z0-9\\-]{2,12}?)\\s*(?=(?:到|至|去|领|取|在|格|号柜|菜鸟|驿站|快递柜))", RegexOption.IGNORE_CASE)
+    private val PING_CODE = Regex("(?:凭|好评码|提取码)[:：]?\\s*([A-Za-z0-9\\-]{2,12}?)\\s*(?=(?:到|至|去|领|取|在|格|号柜|菜鸟|驿站|快递柜))", RegexOption.IGNORE_CASE)
 
     // 跨行前缀：上一行是取件码/凭条等词 + 下一行开头是码（后接地址/通知等）；去掉行尾$锚点，
     // 否则"231607 到育新路..."这类码后跟真实地址的会被漏抓（需保留开头强锚定 + 后不能紧邻数字/破折号）
@@ -159,17 +162,24 @@ object CodeExtractor {
         "取餐号", "取单码", "取单号", "排队", "点单"
     )
 
+    /** 券码上下文信号词：团购券/兑换码类截图（识别目标就是券号），命中即放行金融闸门。 */
+    private val COUPON_SIGNAL_KEYWORDS = listOf("券号", "券码", "兑换码", "团购券")
+
     /**
      * 判断一段文本是否为金融/支付类噪音（非取件场景）。
      * 命中金融词且没有快递/取件信号词 → true（应拦截）。
      * 同时命中两者 → false（可能是取件通知里带支付提醒，放行）。
+     * 命中券码信号词 → false（团购券截图带"到店消费/无门槛券"等金融词，
+     * 但识别目标恰是券号；银行/支付通知不会出现券号/券码/兑换码/团购券）。
      */
     fun isFinancialNoise(text: String): Boolean {
         if (text.isBlank()) return false
         val hasFinancial = FINANCIAL_KEYWORDS.any { text.contains(it, ignoreCase = true) }
         if (!hasFinancial) return false
         val hasExpressSignal = EXPRESS_SIGNAL_KEYWORDS.any { text.contains(it, ignoreCase = true) }
-        return !hasExpressSignal
+        if (hasExpressSignal) return false
+        val hasCouponSignal = COUPON_SIGNAL_KEYWORDS.any { text.contains(it) }
+        return !hasCouponSignal
     }
 
     // ---------------------------------------------------------------
@@ -252,6 +262,21 @@ object CodeExtractor {
                 if (THREE_SEGMENT_PARCEL.matches(code) || FOUR_SEGMENT_PARCEL.matches(code)) s += PING_MULTISEG_BONUS
                 candidates.add(Candidate(code, CodeType.pickup_parcel, s,
                     sourceFromLine(line, "凭条号", lines, allText), strong = true))
+            }
+        }
+
+        // 券号提取（团购券/到店券）：一次捕获整段跨空格长数字后去空格/间隔点还原完整码。
+        // 不走 isValidStrongContextCode/isExcluded（其格式白名单最长 8 位数字、14 位上限，
+        // 15 位团购券号必被拒）；用 内容噪声检查 + 6..20 位纯数字 独立校验。
+        // 类型固定 coupon：受"券码识别"开关控制，无到期提醒，与二维码券码同通道。
+        for (line in lines) {
+            COUPON_NUMBER.findAll(line.text).forEach { m ->
+                val digits = m.groupValues[1].replace(Regex("[\\s·.]"), "")
+                if (digits.length in 6..20 && digits.all { it.isDigit() } &&
+                    !CodeValidator.isContentNoise(digits)) {
+                    candidates.add(Candidate(digits, CodeType.coupon, SCORE_PREFIXED,
+                        sourceFromLine(line, "券号", lines, allText), strong = true))
+                }
             }
         }
 
