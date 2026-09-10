@@ -1,0 +1,6 @@
+# id: parcel-letter-dash-five
+# source: screen
+# note: 字母-横杠-5 位数字 D-06003（兔喜/丰巢常见）
+L - - - - - 取件码:D-06003
+
+E code pickup_parcel D-06003

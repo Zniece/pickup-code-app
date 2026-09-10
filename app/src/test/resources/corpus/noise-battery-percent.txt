@@ -1,0 +1,4 @@
+# id: noise-battery-percent
+# source: screen
+# note: 码值紧邻 % 视为电量百分比噪声（hasAdjacentNoise）；无 E code 段 = 不允许任何码
+L - - - - - 瑞幸咖啡 取餐码 529%

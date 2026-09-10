@@ -12,7 +12,9 @@ import com.pickupcode.app.learner.CommonStationStore
 import com.pickupcode.app.notification.CodeNotificationManager
 import com.pickupcode.app.ocr.OCREngine
 import com.pickupcode.app.preferences.AppPreferences
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.withContext
 
 /**
  * 识别后处理管线——三条路径（无障碍/分享/短信）共用的「逐码落库 + 通知」逻辑。
@@ -96,9 +98,12 @@ object RecognitionPipeline {
                 timestamp = timestamp,
                 expiryTime = expiryTime
             ))
-            // 覆盖更新的旧截图成孤儿文件（系统清理前不回收），立即删除
+            // 覆盖更新的旧截图成孤儿文件（系统清理前不回收），立即删除。
+            // 走 Dispatchers.IO：分享/短信路径的调用方协程可能跑在 Default 上，别让文件 IO 占用 CPU 池
             if (save.replacedScreenshotPath.isNotBlank()) {
-                try { java.io.File(save.replacedScreenshotPath).delete() } catch (_: Exception) {}
+                withContext(Dispatchers.IO) {
+                    try { java.io.File(save.replacedScreenshotPath).delete() } catch (_: Exception) {}
+                }
             }
             saved.add(SavedCode(code, type, source, save.id, save.existed, effAddr))
 

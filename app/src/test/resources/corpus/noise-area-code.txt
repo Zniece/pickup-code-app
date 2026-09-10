@@ -1,0 +1,7 @@
+# id: noise-area-code
+# source: screen
+# note: 座机区号前缀 0394-8301307 不得被当成取件码（hasAdjacentNoise 的区号规则）
+L - - - - - 联系电话 0394-8301307
+L - - - - - 取件码 1-6-5020
+
+E code pickup_parcel 1-6-5020

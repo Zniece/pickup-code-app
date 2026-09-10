@@ -299,7 +299,7 @@ object CodeExtractor {
         // B3: 记住"编译后 pattern -> 存储用 regex 字符串"，命中时用来 touchRule 刷新 lastUsedAt
         val regexToLearned = mutableMapOf<String, String>()
         if (context != null) {
-            val learned = com.pickupcode.app.learner.PatternLearner.getLearnedPatterns(context)
+            val learned = com.pickupcode.app.learner.PatternLearner.cachedLearnedPatterns(context)
             // 诊断：已加载的自学习规则概览（仅 Debug 构建，避免无障碍热路径日志开销）
             if (com.pickupcode.app.BuildConfig.DEBUG) {
                 val active = learned.count { it.enabled && it.badCount < 3 }
@@ -381,7 +381,11 @@ object CodeExtractor {
             }
         }
 
-        if (candidates.isEmpty()) return emptyList()
+        if (candidates.isEmpty()) {
+            // 无候选时也要留快照——这正是最需要调试面板的场景（此前直接 return，面板无数据）
+            debugCapture(lines, emptyList(), emptyList(), allText, source, screenHeight, context)
+            return emptyList()
+        }
 
         if (isParcelContext && !isFoodContext) candidates.replaceAll { c -> if (c.type == CodeType.pickup_food) c.copy(score = c.score - SCORE_CROSS_TYPE_PENALTY) else c }
         if (isFoodContext && !isParcelContext) candidates.replaceAll { c -> if (c.type == CodeType.pickup_parcel) c.copy(score = c.score - SCORE_CROSS_TYPE_PENALTY) else c }
@@ -424,23 +428,6 @@ object CodeExtractor {
                 val ctx = if (lineIdx >= 0) lines[lineIdx].text else "?"
                 android.util.Log.d("CodeExtrDiag", "cand: code=${it.code} score=${it.score} type=${it.type} src=${it.source} line=$lineIdx ctx=$ctx")
             }
-            // 调试快照（识别调试视图用）：与日志同源，UI 面板直接消费
-            RecognitionDebugStore.capture(
-                lines = lines,
-                candidates = candidates.map { c ->
-                    val li = lines.indexOfFirst { l -> l.text.contains(c.code) }
-                    RecognitionDebugStore.CandidateInfo(
-                        code = c.code,
-                        score = c.score,
-                        type = c.type.name,
-                        source = c.source,
-                        lineIndex = li,
-                        context = if (li >= 0) lines[li].text else "?"
-                    )
-                },
-                allText = allText,
-                source = source
-            )
         }
         val seen = mutableSetOf<String>()
         val results = mutableListOf<ExtractedCode>()
@@ -463,7 +450,37 @@ object CodeExtractor {
             }
         }
         if (context != null) recordLearning(context, results, allText, source)
+        // 调试快照：候选 + 最终结果 + 屏幕高度一并入栈（面板展示 / 语料导出）
+        debugCapture(lines, candidates, results, allText, source, screenHeight, context)
         return results
+    }
+
+    /** 调试快照（仅 DEBUG）：把候选与最终结果写入 RecognitionDebugStore，供面板与语料导出消费。 */
+    private fun debugCapture(
+        lines: List<OCREngine.TextLine>,
+        candidates: List<Candidate>,
+        results: List<ExtractedCode>,
+        allText: String,
+        source: String,
+        screenHeight: Int,
+        context: Context?
+    ) {
+        if (!com.pickupcode.app.BuildConfig.DEBUG || context == null) return
+        fun toInfo(code: String, score: Float, type: CodeType, src: String): RecognitionDebugStore.CandidateInfo {
+            val li = lines.indexOfFirst { it.text.contains(code) }
+            return RecognitionDebugStore.CandidateInfo(
+                code = code, score = score, type = type.name, source = src,
+                lineIndex = li, context = if (li >= 0) lines[li].text else "?"
+            )
+        }
+        RecognitionDebugStore.capture(
+            lines = lines,
+            candidates = candidates.map { toInfo(it.code, it.score, it.type, it.source) },
+            allText = allText,
+            source = source,
+            screenHeight = screenHeight,
+            finalResults = results.map { toInfo(it.code, it.confidence * SCORE_PREFIXED, it.type, it.source) }
+        )
     }
 
     private data class Candidate(val code: String, val type: CodeType, val score: Float, val source: String, val strong: Boolean = false)

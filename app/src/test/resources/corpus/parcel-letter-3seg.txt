@@ -1,0 +1,9 @@
+# id: parcel-letter-3seg
+# source: screen
+# note: 字母前缀三段式 A8-3-3315（无「取件码」前缀，走 LETTER_THREE_SEG）；断言子串 3-3315 不被单独抓出
+L - - - - - 菜鸟驿站
+L - - - - - 包裹已到，货架号 A8-3-3315
+
+E code pickup_parcel A8-3-3315
+E forbid 3-3315
+E station 菜鸟驿站

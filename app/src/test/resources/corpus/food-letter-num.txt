@@ -1,0 +1,8 @@
+# id: food-letter-num
+# source: screen
+# note: 餐饮「字母+数字」取餐码（瑞幸 A12）
+L - - - - - 瑞幸咖啡
+L - - - - - 取餐码 A12
+L - - - - - 请及时取餐
+
+E code pickup_food A12

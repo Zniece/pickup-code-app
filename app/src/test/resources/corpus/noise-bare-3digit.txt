@@ -1,0 +1,5 @@
+# id: noise-bare-3digit
+# source: screen
+# note: 无餐饮/取件上下文的裸 3 位数字不得入库（无 E code 段 = 不允许任何码）
+L - - - - - 订单详情
+L - - - - - 202

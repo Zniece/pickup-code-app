@@ -1,0 +1,8 @@
+# id: parcel-fengchao-4seg
+# source: screen
+# note: 四段式码 A1-2-3-45（丰巢/柜机常见）
+L - - - - - 丰巢智能柜
+L - - - - - 取件码：A1-2-3-45
+
+E code pickup_parcel A1-2-3-45
+E station 丰巢

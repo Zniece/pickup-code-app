@@ -12,6 +12,7 @@ import com.pickupcode.app.data.AppDatabase
 import com.pickupcode.app.data.CodeHistory
 import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
+import com.pickupcode.app.extractor.CodeValidator
 import com.pickupcode.app.extractor.AddressExtractor
 import com.pickupcode.app.extractor.BrandResolver
 import com.pickupcode.app.extractor.CouponDetector
@@ -354,6 +355,10 @@ object ShareReceiver {
             for (c in coupons) {
                 val v = c.rawValue?.trim()
                 if (v.isNullOrBlank()) continue
+                if (!CodeValidator.isValidCouponPayload(v)) {
+                    Log.d(TAG, "券码载荷不合规，已丢弃（长度 ${v.length}）")
+                    continue
+                }
                 if (allResults.any { it.code == v && it.type == CodeExtractor.CodeType.coupon }) continue
                 allResults.add(CodeExtractor.ExtractedCode(v, CodeExtractor.CodeType.coupon, "券码", 1.0f))
                 hasCoupon = true

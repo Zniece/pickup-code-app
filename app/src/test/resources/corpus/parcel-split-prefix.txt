@@ -1,0 +1,7 @@
+# id: parcel-split-prefix
+# source: screen
+# note: OCR 把「取件码」拆成两行（上一行尾「取」+ 本行「件码067865」）——跨行前缀拼接
+L - - - - - 取
+L - - - - - 件码067865
+
+E code pickup_parcel 067865

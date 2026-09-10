@@ -114,7 +114,7 @@ class AddressExtractorTest {
             .mapIndexed { i, line ->
                 com.pickupcode.app.ocr.OCREngine.TextLine(
                     text = line.trim(),
-                    boundingBox = android.graphics.Rect(0, i * 30, 500, (i + 1) * 30),
+                    boundingBox = com.pickupcode.app.ocr.OCREngine.LineBox(0, i * 30, 500, (i + 1) * 30),
                     confidence = 1.0f
                 )
             }

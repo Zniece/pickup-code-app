@@ -1,0 +1,7 @@
+# id: food-short-prefixed
+# source: screen
+# note: 强前缀放行 3 位纯数字取餐码（取餐码 123）——无前缀的裸 3 位数字必须拒绝
+L - - - - - 瑞幸咖啡
+L - - - - - 取餐码 123
+
+E code pickup_food 123

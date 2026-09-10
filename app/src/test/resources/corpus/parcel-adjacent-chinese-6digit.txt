@@ -1,0 +1,7 @@
+# id: parcel-adjacent-chinese-6digit
+# source: screen
+# note: 6 位纯数字紧贴中文（欢猫智柜 749019复制）——ICU 下 \b 失效的历史回归
+L - - - - - 欢猫智柜 749019复制
+
+E code pickup_parcel 749019
+E station 欢猫智柜

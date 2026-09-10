@@ -23,6 +23,7 @@ import com.pickupcode.app.extractor.AIExtractor
 import com.pickupcode.app.extractor.CodeExtractor
 import com.pickupcode.app.extractor.AddressExtractor
 import com.pickupcode.app.extractor.BrandResolver
+import com.pickupcode.app.extractor.CodeValidator
 import com.pickupcode.app.extractor.CouponDetector
 import com.pickupcode.app.geocoder.GeocoderVerifier
 import com.pickupcode.app.kuaidi100.Kuaidi100Verifier
@@ -256,8 +257,10 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         mainHandler.removeCallbacksAndMessages(null)
         scope.cancel()
         screenshotExecutor.shutdownNow()
-        // 释放 ML Kit 客户端（unbind 未必紧跟 destroy，提前释放避免 native 累积）；异步，不在主线程阻塞
-        closeMlKitClients()
+        // 刻意不在 onUnbind 关闭 ML Kit 客户端：服务实例常被系统复用（用户关→开无障碍、
+        // 临时解绑都会再次 onServiceConnected），此时关闭只会白白销毁刚建好的 native 客户端，
+        // 且与重连后的首次识别存在"刚创建就被关"的时序浪费。客户端是单例复用，不关闭也不会累积。
+        // 真正释放放在 onDestroy（见下）。
         return super.onUnbind(intent)
     }
 
@@ -502,6 +505,11 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             for (c in coupons) {
                 val v = c.rawValue?.trim()
                 if (v.isNullOrBlank()) continue
+                // 券码载荷校验：拒绝 URL/JSON/含空白/超长内容（QR 里可能是一整个网页）
+                if (!CodeValidator.isValidCouponPayload(v)) {
+                    Log.d(TAG, "券码载荷不合规，已丢弃（长度 ${v.length}）")
+                    continue
+                }
                 val key = "$v|${CodeExtractor.CodeType.coupon}"
                 if (allResults.any { "${it.first}|${it.second}" == key }) continue
                 allResults.add(v to CodeExtractor.CodeType.coupon)

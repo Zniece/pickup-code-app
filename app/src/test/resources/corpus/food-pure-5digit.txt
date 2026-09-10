@@ -1,0 +1,7 @@
+# id: food-pure-5digit
+# source: screen
+# note: 餐饮 5 位纯数字取餐码（蜜雪冰城 51229）
+L - - - - - 蜜雪冰城
+L - - - - - 取餐码 51229
+
+E code pickup_food 51229

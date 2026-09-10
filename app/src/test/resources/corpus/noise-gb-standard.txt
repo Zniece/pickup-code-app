@@ -1,0 +1,7 @@
+# id: noise-gb-standard
+# source: screen
+# note: 国标号 GB/T19777 不得被当成取件码（hasAdjacentNoise 的 GB/ 规则）
+L - - - - - 山西老陈醋 GB/T19777
+L - - - - - 取件码 1-6-5020
+
+E code pickup_parcel 1-6-5020

@@ -338,9 +338,16 @@ object PatternLearner {
     // Convert token pattern -> candidate regex
     // ---------------------------------------------------------------
 
+    /**
+     * 自动生成正则的边界。用显式环视而非 \b——Android(ICU) 的 \b 把中文当词字符，
+     * 码值紧贴中文时（如 "749019复制"）边界失效导致漏抓；与 CodeValidator/CodeExtractor 同一约定。
+     */
+    private const val BOUNDARY_LEFT = "(?<![\\dA-Za-z])"
+    private const val BOUNDARY_RIGHT = "(?![\\dA-Za-z])"
+
     private fun tokenToRegex(tok: String): String {
         val parts = parseRuns(tok)
-        val sb = StringBuilder("\\b")
+        val sb = StringBuilder(BOUNDARY_LEFT)
         for ((cls, count) in parts) {
             sb.append(when (cls) {
                 'd' -> if (count == 1) "\\d" else "\\d{$count}"
@@ -352,9 +359,18 @@ object PatternLearner {
                 else -> "."
             })
         }
-        sb.append("\\b")
+        sb.append(BOUNDARY_RIGHT)
         return sb.toString()
     }
+
+    /**
+     * 旧版本（<1.0.10）生成的学习规则用 \b 边界，在 Android 上对中文邻接的码失效。
+     * 读取时把首尾的 \b 一次性改写为环视边界；只动首尾，规则中间的 \b 保持原样。
+     */
+    internal fun migrateBoundary(regex: String): String =
+        regex
+            .replace(Regex("^\\\\b")) { BOUNDARY_LEFT }
+            .replace(Regex("\\\\b$")) { BOUNDARY_RIGHT }
 
     private data class Run(val cls: Char, val count: Int)
 
@@ -570,6 +586,8 @@ private val verifiedAddrLock = Any()
         }
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putString(KEY_LEARNED, arr.toString()).apply()
+        // 写入即失效热路径缓存，保证识别立即看到新规则/衰减状态
+        rulesCache = null
     }
 
     /** Check suggestions and auto-apply patterns with count ≥ minCount and confidence ≥ minConf. */
@@ -627,6 +645,23 @@ private val verifiedAddrLock = Any()
         autoApply(context)
     }
 
+    // 识别热路径缓存：CodeExtractor 每次识别都会读全部已学规则，避免每次读盘 + 解析 JSON。
+    // 任何写入都经 saveLearnedPatterns 失效缓存。
+    @Volatile private var rulesCache: List<LearnedRule>? = null
+    @Volatile private var rulesCacheAt = 0L
+    private const val RULES_CACHE_MS = 2000L
+
+    /** 识别热路径用：带 2s TTL 的已学规则缓存。UI/统计请用 [getLearnedPatterns]（总是最新）。 */
+    fun cachedLearnedPatterns(context: Context): List<LearnedRule> {
+        val now = System.currentTimeMillis()
+        val cached = rulesCache
+        if (cached != null && now - rulesCacheAt < RULES_CACHE_MS) return cached
+        val fresh = getLearnedPatterns(context)
+        rulesCache = fresh
+        rulesCacheAt = now
+        return fresh
+    }
+
     fun getLearnedPatterns(context: Context): List<LearnedRule> {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_LEARNED, null) ?: return emptyList()
@@ -635,7 +670,7 @@ private val verifiedAddrLock = Any()
             (0 until arr.length()).map {
                 val obj = arr.getJSONObject(it)
                 LearnedRule(
-                    obj.getString("regex"),
+                    migrateBoundary(obj.getString("regex")),
                     obj.getString("type"),
                     obj.getString("label"),
                     obj.optInt("count", 0),

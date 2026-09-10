@@ -26,9 +26,21 @@ object OCREngine {
         }
     }
 
+    /**
+     * OCR 行的包围盒。纯 Kotlin 实现，**刻意不用 android.graphics.Rect**：
+     * Rect 在 JVM 单测里被 mock 成全零（构造器不赋值字段），几何分支（S0c 双列 / S7 续行 /
+     * S8 邻近窗口 / S10 拼接 / 位置与字号加分）无法被验证。换成此类型后 corpus 语料
+     * 可直接构造几何场景，识别层也不再依赖 android.graphics。
+     */
+    data class LineBox(val left: Int, val top: Int, val right: Int, val bottom: Int) {
+        fun width(): Int = right - left
+        fun height(): Int = bottom - top
+        fun centerY(): Int = (top + bottom) / 2
+    }
+
     data class TextLine(
         val text: String,
-        val boundingBox: android.graphics.Rect?,
+        val boundingBox: LineBox?,
         val confidence: Float?
     )
 
@@ -59,7 +71,7 @@ object OCREngine {
                     out.add(
                         TextLine(
                             text = line.text.trim().replace(UNICODE_DASHES, "-"),
-                            boundingBox = line.boundingBox,
+                            boundingBox = line.boundingBox?.let { LineBox(it.left, it.top, it.right, it.bottom) },
                             confidence = line.confidence
                         )
                     )

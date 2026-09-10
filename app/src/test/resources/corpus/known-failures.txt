@@ -1,0 +1,6 @@
+# 已知失败语料：失败不阻断 CI，用于记录待修缺陷。
+# 若某条开始通过，CorpusRegressionTest 会打印提示，请把它从本文件移除。
+#
+# 格式：一行一个语料 id，# 之后为注释
+
+multi-code-window-overlap   # extractAddressForCode 窗口重叠串台（Phase 3 修复）

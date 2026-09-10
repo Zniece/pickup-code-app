@@ -121,6 +121,7 @@ app/src/main/java/com/pickupcode/app/
 
 - **[构建指南](docs/BUILDING.md)** —— 从源码编译（JDK 17 / Gradle 8.9 / Android SDK 要求、常见问题）
 - **[贡献指南](CONTRIBUTING.md)** —— 如何提 Issue、提交 PR、代码规范
+- **[识别语料回归](docs/CORPUS.md)** —— 用真实截图语料量化识别 precision/recall，如何采集新语料
 
 ## 许可证
 

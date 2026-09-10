@@ -1,0 +1,8 @@
+# id: noise-price-cart
+# source: screen
+# note: 价格/数量（x2、¥18.00）不得被当成取餐码
+L - - - - - 瑞幸咖啡 取餐码 A12
+L - - - - - 生椰拿铁 x2 ¥18.00
+L - - - - - 实付 ¥18.00
+
+E code pickup_food A12

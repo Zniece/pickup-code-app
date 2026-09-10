@@ -1,0 +1,8 @@
+# id: parcel-tuxi-digit-dash
+# source: screen
+# note: 兔喜式单段码「取件码为5-3858」+【】括号站名
+L - - - - - 【兔喜生活】您的包裹已到
+L - - - - - 取件码为5-3858
+
+E code pickup_parcel 5-3858
+E station 兔喜

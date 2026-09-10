@@ -78,7 +78,14 @@ android {
     }
 
     testOptions {
-        unitTests.all { it.useJUnitPlatform() }
+        unitTests.all {
+            it.useJUnitPlatform()
+            // 让 corpus 指标（println）与失败详情出现在 gradle 控制台，无需翻 HTML 报告
+            it.testLogging {
+                events("failed", "skipped")
+                showStandardStreams = true
+            }
+        }
         unitTests.isReturnDefaultValues = true
     }
 
@@ -112,6 +119,11 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     // ML Kit Barcode Scanning (bundled, offline, detects+decodes QR/barcode)
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+
+    // EXIF 旋转（ImageUtils.decodeSampledBitmap 用 ExifInterface.rotationDegrees）。
+    // 该库由 ML Kit 的 vision-common 传递引入，并被其 strictly 锁在 1.0.0（升级会与 ML Kit 约束冲突）；
+    // 显式声明是为了避免将来 ML Kit 移除这条传递依赖时，分享图片的 EXIF 旋转编译失败。
+    implementation("androidx.exifinterface:exifinterface:1.0.0")
 
 
     // Room for history storage

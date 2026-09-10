@@ -1,6 +1,5 @@
 package com.pickupcode.app.extractor
 
-import android.graphics.Rect
 import com.pickupcode.app.ocr.OCREngine
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Test
@@ -36,7 +35,7 @@ class CourierTrackingLineAddrTest {
 
     private fun lines(): List<OCREngine.TextLine> = raw.map { (i, t) ->
         val (x, y, w, h) = boxes[i]!!.split(",").map { it.trim().toInt() }
-        OCREngine.TextLine(t, Rect(x, y, x + w, y + h), 0.7f)
+        OCREngine.TextLine(t, OCREngine.LineBox(x, y, x + w, y + h), 0.7f)
     }
 
     @Test

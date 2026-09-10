@@ -80,10 +80,14 @@ object CodeValidator {
      * 拆出供强前缀上下文路径复用（取餐码 123 这类短码跳过格式白名单但必须过内容检查）。
      */
     internal fun isContentNoise(code: String): Boolean {
-        val c = code.trim()
-        val stripped = c.replace("-", "").replace(" ", "")
+        val stripped = code.trim().replace("-", "").replace(" ", "")
         val len = stripped.length
         if (len < 2 || len > 20) return true
+        return isContentNoiseCore(stripped)
+    }
+
+    /** 内容噪声核心检查（不含长度上下限）——供券码等形态自由的载荷复用。 */
+    internal fun isContentNoiseCore(stripped: String): Boolean {
         // 86 开头手机号子串
         if (stripped.startsWith("86") && stripped.length in 8..13) return true
         // 全 0 或全 1
@@ -100,6 +104,19 @@ object CodeValidator {
         // xxx 模式（占位/噪声）
         if (Regex("[xX]{3,}").containsMatchIn(stripped)) return true
         return false
+    }
+
+    /**
+     * 券码（二维码/条码解码值）入库前校验。券码形态自由，不套取件码格式白名单，
+     * 但必须挡掉"扫码得到一整个网页/JSON"这类载荷——否则会把 URL/结构化数据当成券码入库。
+     */
+    fun isValidCouponPayload(raw: String?): Boolean {
+        val v = raw?.trim().orEmpty()
+        if (v.length !in 2..64) return false
+        if (v.any { it.isWhitespace() || it.isISOControl() }) return false
+        if (v.startsWith("{") || v.startsWith("[") || v.startsWith("<")) return false
+        if (v.contains("://")) return false
+        return !isContentNoiseCore(v.replace("-", ""))
     }
 
     // 合法取件/取餐码格式白名单（与上方解析正则一一对应，去锚点/去分组后用于全串匹配）

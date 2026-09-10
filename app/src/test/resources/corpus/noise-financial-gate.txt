@@ -1,0 +1,5 @@
+# id: noise-financial-gate
+# source: screen
+# note: 金融/支付类文本且无快递信号词 → 整段不识别（isFinancialNoise 闸门）。无 E code 段 = 不允许任何码
+L - - - - - 【招商银行】您尾号1234账户消费人民币500.00元
+L - - - - - 交易时间 1-2-3456
