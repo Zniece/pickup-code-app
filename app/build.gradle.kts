@@ -26,8 +26,12 @@ android {
         applicationId = "com.pickupcode.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.0.9"
+        // 24/1.0.9 与已发布版同号 → 修复（含 DB v7 迁移）无法下发。
+        // 24 → 25 / 1.0.9 → 1.0.10：本版包含 MIGRATION_6_7（清理 1→3 时代遗留孤儿列），
+        // 是那批"从 DB v1/v2 直跳上来会崩"的老用户唯一能升上来的版本。
+        // ⚠️ 打 tag 时必须让 tag 落在本次 bump 提交上（v1.0.9 出现过 tag 与产物错位）。
+        versionCode = 25
+        versionName = "1.0.10"
     }
 
     signingConfigs {
