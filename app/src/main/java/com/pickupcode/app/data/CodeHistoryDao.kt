@@ -78,6 +78,20 @@ interface CodeHistoryDao {
     @Query("SELECT screenshotPath FROM code_history WHERE isActive = 0 AND doneAt > 0 AND doneAt < :before AND screenshotPath != ''")
     suspend fun getExpiredScreenshots(before: Long): List<String>
 
+    // ---- 截图治理（代码检查 3-3 / 3-14：孤儿文件、无 TTL）----
+
+    /** 仍被任意记录（含回收站）引用的截图路径 → 用于判定哪些文件是"孤儿"。 */
+    @Query("SELECT screenshotPath FROM code_history WHERE screenshotPath != ''")
+    suspend fun getAllScreenshotPaths(): List<String>
+
+    /** 指定记录引用的截图路径（供删除记录时一并回收文件，避免 cacheDir 孤儿）。 */
+    @Query("SELECT screenshotPath FROM code_history WHERE id IN (:ids) AND screenshotPath != ''")
+    suspend fun getScreenshotPathsByIds(ids: List<Long>): List<String>
+
+    /** 文件已被删除（超期/超量）后清空引用，避免详情页指向不存在的文件。 */
+    @Query("UPDATE code_history SET screenshotPath = '' WHERE screenshotPath IN (:paths)")
+    suspend fun clearScreenshotPaths(paths: List<String>)
+
     /** 手动删除回收站记录 */
     @Query("DELETE FROM code_history WHERE id = :id")
     suspend fun deleteById(id: Long)
