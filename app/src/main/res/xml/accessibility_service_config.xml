@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  注意：这里**刻意不声明 android:packageNames**。
+  packageNames 是**白名单**，一旦声明，手动路径（磁贴/音量键）在任意应用里就彻底不能用了
+  （用户看到取件短信/群消息时主动触发，正是产品的主用法）。
+  敏感应用的保护改在代码里做：PickupCodeAccessibilityService 的 SENSITIVE_PACKAGE_PREFIXES
+  （银行/支付/验证器/密码管理器/电子身份证 → 拒绝读屏与截图，并给用户可见提示），
+  自动扫描的包名匹配也从裸 startsWith 改成带包名边界的精确匹配。
+-->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:accessibilityEventTypes="typeWindowStateChanged"
     android:accessibilityFeedbackType="feedbackGeneric"

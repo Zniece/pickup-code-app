@@ -30,9 +30,10 @@ object PatternLearner {
     private val PURE_CANDIDATE = Regex("""(?<![\dA-Za-z])(\d{3,6})(?![\dA-Za-z])""")
 
     // 候选排除上下文 — 避免价格/数量/时长/楼层/度量等干扰片段被喂入学习池
+    // ⚠️ 末尾的 x\d{1,2} 不能用 \b（Android/ICU 下中文邻接时 \b 不成立），改环视边界
     private val CANDIDATE_EXCLUDE_CTX = Regex(
         """(?:\d+[元块]|\d+[份件个杯]|\d+[分钟]|\d+[号号楼栋室层]|""" +
-        """\d+[折]|\d+[毫升升]|x\d{1,2}\b|\d{8,})""",
+        """\d+[折]|\d+[毫升升]|x\d{1,2}(?![\dA-Za-z])|\d{8,})""",
         RegexOption.IGNORE_CASE
     )
 
@@ -225,7 +226,10 @@ object PatternLearner {
             .edit().putString(KEY_EXCLUDES, arr.toString()).apply()
         excludeCache = kept   // 立即刷新进程内缓存（与落盘保持一致）
         excludeCacheAt = System.currentTimeMillis()
-        Log.d(TAG, "新增排除词「$token」（当前共 ${kept.size} 条，上限 $MAX_EXCLUDES）")
+        // 仅 Debug 打印：token 就是**码值**（隐私数据），release 包里不允许进 logcat
+        if (com.pickupcode.app.BuildConfig.DEBUG) {
+            Log.d(TAG, "新增排除词「$token」（当前共 ${kept.size} 条，上限 $MAX_EXCLUDES）")
+        }
     }
 
     /** 当前可学习的排除片段。 */
@@ -698,8 +702,11 @@ private val verifiedAddrLock = Any()
                         if (Regex(r.regex).matches(code)) {
                             changed = true
                             val nb = r.copy(badCount = r.badCount + 1)
-                            Log.d(TAG, "已学规则 ${r.regex} 因码「$code」被标记不正确，badCount=${nb.badCount}" +
-                                if (nb.badCount >= 3) " → 达到 3 次自动停用" else "")
+                            // 仅 Debug 打印：含码值，release 不允许进 logcat
+                            if (com.pickupcode.app.BuildConfig.DEBUG) {
+                                Log.d(TAG, "已学规则 ${r.regex} 因码「$code」被标记不正确，badCount=${nb.badCount}" +
+                                    if (nb.badCount >= 3) " → 达到 3 次自动停用" else "")
+                            }
                             nb
                         } else r
                     } catch (_: Exception) { r }

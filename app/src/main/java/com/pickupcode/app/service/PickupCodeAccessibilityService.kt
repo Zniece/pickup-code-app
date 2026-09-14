@@ -117,10 +117,67 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
 
         private val AUTO_SCAN_PACKAGES = setOf(
-            "com.meituan", "com.sankuai", "me.ele", "com.eg.android",
-            "com.kfc", "com.mcdonalds", "com.cainiao",
-            "com.taobao.taobao", "com.jingdong.app.mall", "com.pinduoduo",
+            "com.meituan", "com.sankuai.meituan", "me.ele", "com.eg.android.AlipayGphone",
+            "com.kfc", "com.mcdonalds", "com.cainiao.wireless",
+            "com.taobao.taobao", "com.jingdong.app.mall", "com.xunmeng.pinduoduo",
         )
+
+        /**
+         * 精确包名匹配（含子包）：`pkg == entry` 或 `pkg.startsWith("$entry.")`。
+         * 历史实现用裸 `startsWith(entry)`，同前缀的**任意**包名都会被自动扫描
+         * （如 `com.eg.android.EvilApp` 也会命中 `com.eg.android`），改成带包名边界的匹配。
+         *
+         * 注：`AccessibilityEvent.packageName` 不带 ":进程名" 后缀，故无需处理冒号形式。
+         */
+        fun isAutoScanPackage(pkg: String): Boolean =
+            AUTO_SCAN_PACKAGES.any { pkg == it || pkg.startsWith("$it.") }
+
+        /**
+         * 敏感应用拒采清单（代码检查 P0-4）：无包名护栏时，用户误触磁贴/音量键会把
+         * **银行、支付、验证器、密码管理器、电子身份证**等界面一并读屏 + 截图。
+         * 命中即拒绝采集，并给用户可见提示（见 [performScan]）。
+         *
+         * 判断同样按包名边界，避免前缀误伤/漏判。
+         * 说明：**不包含微信/QQ** —— 它们是取件码的正当来源，且手动路径由用户主动触发，
+         * 一刀切会把正常功能砍掉；敏感场景由上面的银行/验证器/密码管理器清单覆盖。
+         */
+        private val SENSITIVE_PACKAGE_PREFIXES = setOf(
+            // 银行 / 信用卡（含本机实测装到的）
+            "cmb.pb", "com.cmbchina", "com.android.bankabc", "com.chinamworld.main",
+            "com.icbc", "com.bankcomm", "com.spdbccc", "com.ccb", "com.abchina",
+            "com.cebbank", "com.cib", "com.citic", "com.hxb", "com.pingan.paces", "com.pingan.pabank",
+            // 支付 / 银联 / 钱包
+            "com.unionpay", "com.unionpay.tsmservice", "com.eg.android.AlipayGphoneRC",
+            "com.tenpay.android", "com.pboc", "cn.gov.pbc.dcep",
+            // 身份 / 证书
+            "cn.cyberIdentity.certification", "com.android.identity",
+            // 动态口令 / 验证器
+            "com.google.android.apps.authenticator2", "com.microsoft.authenticator",
+            "com.authy.authy", "com.duosecurity.duomobile", "com.azure.authenticator",
+            // 密码管理器
+            "com.bitwarden", "com.x8bit.bitwarden", "com.lastpass.lpandroid",
+            "com.onepassword.android", "com.agilebits.onepassword", "com.keepersecurity",
+        )
+
+        /** 该包名是否属于"禁止读屏/截图"的敏感应用。 */
+        fun isSensitivePackage(pkg: String): Boolean =
+            SENSITIVE_PACKAGE_PREFIXES.any { pkg == it || pkg.startsWith("$it.") }
+
+        /**
+         * 进程级常驻截图回调执行器（代码检查 P0-5）。
+         *
+         * 历史问题：执行器是**实例级**的，`onUnbind`/`onDestroy` 里 `shutdownNow()`；
+         * 若解绑发生时截图回调仍在途，系统会把回调投递到**已关闭的执行器**
+         * → `RejectedExecutionException` 抛在 binder 线程 → 进程崩溃。
+         * 而国产 ROM 的省电策略导致的静默解绑非常常见，命中概率不低。
+         *
+         * 现在：**进程级单例、永不 shutdown**，daemon 线程，空闲时不占资源；
+         * 解绑只取消上层协程任务，不再关闭执行器（回调内只做最轻的搬运）。
+         */
+        private val screenshotExecutor: java.util.concurrent.ExecutorService =
+            java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+                Thread(r, "pickup-screenshot").apply { isDaemon = true }
+            }
     }
 
     /** 顶层协程异常兜底：SupervisorJob 不吞子协程异常，无 handler 时任何未捕获异常都会崩进程。
@@ -137,9 +194,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
     private var scope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
     // 复用单例主线程 Handler：heartbeat 自续 + onAccessibilityEvent 延时调度共用，便于统一 removeCallbacks（H3/M2）
     private val mainHandler = Handler(Looper.getMainLooper())
-    // 截图回调线程池：模块级单例，避免每次 captureAndExtract 新建线程泄漏（M7）。
-    // 同 scope：onUnbind shutdownNow 后需在重连时重建（Top1 修复）。
-    private var screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    // 截图回调执行器：见 companion 里的 screenshotExecutor —— **进程级常驻、永不关闭**（P0-5：
+    // 实例级 + shutdownNow 会让在途回调撞上已关闭执行器，抛在 binder 线程直接崩进程）。
 
     /** 异步释放 ML Kit 客户端。close() 会等待在途识别/检测完成（最长 30s/10s），
      *  不能在 onUnbind/onDestroy 主线程里同步阻塞（ANR 风险）。 */
@@ -171,9 +227,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         notifyTileRefresh()
 
         // Top1: 服务实例可能在 onUnbind 后复用（用户关→开无障碍、系统临时解绑均会再次走到这里）。
-        // 上一轮 onUnbind 已 cancel scope / shutdown executor，必须重建，否则识别功能静默全废。
+        // 上一轮 onUnbind 已 cancel scope，必须重建，否则识别功能静默全废。
+        // （screenshotExecutor 是进程级常驻、不随解绑关闭，无需重建 —— P0-5）
         if (!scope.isActive) scope = CoroutineScope(Dispatchers.Main + SupervisorJob() + exceptionHandler)
-        if (screenshotExecutor.isShutdown) screenshotExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
 
         val info = AccessibilityServiceInfo().apply {
             // Medium-1: 只注册 WINDOW_STATE_CHANGED（服务只消费该事件），减少无关事件唤醒
@@ -256,7 +312,9 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         notifyTileRefresh()
         mainHandler.removeCallbacksAndMessages(null)
         scope.cancel()
-        screenshotExecutor.shutdownNow()
+        // 刻意**不关闭** screenshotExecutor（P0-5）：在途截图回调可能仍会被系统投递，
+        // 关闭它会把 RejectedExecutionException 抛到 binder 线程直接崩进程。
+        // 它是进程级 daemon 单线程、空闲无开销；上层协程已 cancel，回调内的工作会自然丢弃。
         // 刻意不在 onUnbind 关闭 ML Kit 客户端：服务实例常被系统复用（用户关→开无障碍、
         // 临时解绑都会再次 onServiceConnected），此时关闭只会白白销毁刚建好的 native 客户端，
         // 且与重连后的首次识别存在"刚创建就被关"的时序浪费。客户端是单例复用，不关闭也不会累积。
@@ -269,7 +327,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         notifyTileRefresh()
         mainHandler.removeCallbacksAndMessages(null)
         scope.cancel()
-        screenshotExecutor.shutdownNow()
+        // 同上：不关闭 screenshotExecutor（P0-5）
         // 释放 ML Kit 客户端，避免 native 资源随服务重建累积泄漏；异步，不在主线程阻塞
         closeMlKitClients()
         super.onDestroy()
@@ -293,7 +351,8 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             val pkg = event.packageName?.toString() ?: return
             val now = System.currentTimeMillis()
             if (pkg == lastAutoScanPkg && now - lastAutoScanTime < 3000) return
-            if (AUTO_SCAN_PACKAGES.any { pkg.startsWith(it) }) {
+            // 带包名边界的精确匹配（P0-4：裸 startsWith 会让同前缀的任意包名被自动读屏截图）
+            if (isAutoScanPackage(pkg)) {
                 lastAutoScanPkg = pkg
                 lastAutoScanTime = now
                 Log.d(TAG, "自动扫描: $pkg")
@@ -308,6 +367,14 @@ class PickupCodeAccessibilityService : AccessibilityService() {
 
     private fun performScan(source: String) {
         Log.d(TAG, "开始扫描: $source")
+        // 敏感应用拒采（P0-4）：银行/支付/验证器/密码管理器/电子身份证界面一律不读屏、不截图。
+        // 手动路径（磁贴、音量键）此前毫无包名校验，用户误触就会把这些界面读走并落盘。
+        val activePkg = try { rootInActiveWindow?.packageName?.toString() } catch (_: Exception) { null }
+        if (activePkg != null && isSensitivePackage(activePkg)) {
+            Log.w(TAG, "敏感应用，拒绝采集: $activePkg")
+            showResult("已跳过：${activePkg}（敏感应用，不读取也不截图）")
+            return
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             captureAndExtract(source)
         } else {
