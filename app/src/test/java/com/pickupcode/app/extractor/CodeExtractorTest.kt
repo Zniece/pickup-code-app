@@ -295,4 +295,53 @@ class CodeExtractorTest {
         val r = CodeExtractor.extract(listOf(line("券号 000000 到店使用")))
         assertTrue(r.isEmpty(), "全0券号应被内容噪声检查拒绝: ${r.map { it.code }}")
     }
+
+    // ── 金融闸门：单字「柜」曾把银行验证码放行成取件码 ──
+
+    @Test
+    @DisplayName("银行验证码短信里的「柜台」不得被当成快递信号")
+    fun finance_bankCounterNotExpressSignal() {
+        val sms = "【某银行】储蓄卡消费验证码 618008，请勿告知他人，柜台业务请咨询"
+        // 闸门本体：命中金融词 + 无有效快递信号 → 判为噪音。
+        // 三个识别入口都靠它拦截（PickupCodeAccessibilityService:500 / ShareReceiver:343 / SmsReceiver:77），
+        // 所以这里断言 isFinancialNoise 就是断言"识别不会发生"。
+        assertTrue(CodeExtractor.isFinancialNoise(sms), "含金融词且只有「柜台」→ 应判为金融噪音")
+        // 修复前：EXPRESS_SIGNAL_KEYWORDS 含裸字「柜」，这句会被放行，长数字 618008 以取件码入库
+    }
+
+    @Test
+    @DisplayName("带快递信号的银行/支付混合文案仍放行（闸门不能修成误杀）")
+    fun finance_withRealExpressSignalPasses() {
+        assertFalse(CodeExtractor.isFinancialNoise("【菜鸟驿站】您的取件码 1-6-5020，微信支付已扣款"))
+        assertFalse(CodeExtractor.isFinancialNoise("包裹已到快递柜，支付宝到账提醒已关闭"))
+    }
+
+    @Test
+    @DisplayName("「快递柜/智能柜」等复合词仍是有效快递信号")
+    fun finance_compoundCabinetStillExpress() {
+        assertFalse(CodeExtractor.isFinancialNoise("您的包裹已放入快递柜，取件码 1-2-3456"))
+        assertFalse(CodeExtractor.isFinancialNoise("包裹已存入丰巢智能柜，微信支付已完成"))
+        assertFalse(CodeExtractor.isFinancialNoise("取件柜 3 号，凭取件码 8-1-2233"))
+    }
+
+    // ── 阈值基准：不能拿"最长候选"的分数当 top ──
+
+    @Test
+    @DisplayName("同屏有低分长数字时，不得因此放行更弱的噪声（top 必须取最高分）")
+    fun threshold_usesMaxScoreNotLongest() {
+        // 场景：一张取餐码截图里混进两个无关数字。
+        // 修复前 keptCands 按码长排序，top 取到"最长候选(87654321)"的分数 → 阈值被拉低 → 三个全放行；
+        // 修复后 top 取最高分 → 最弱的 8 位长数字被 top×0.75 淘汰。
+        val r = CodeExtractor.extract(listOf(
+            line("取餐码 12345"),
+            line("618008"),
+            line("87654321")
+        ))
+        val codes = r.map { it.code }
+        assertTrue(codes.contains("12345"), "高分取餐码必须保留: $codes")
+        assertTrue(
+            codes.none { it == "87654321" },
+            "最弱的 8 位长数字应被阈值淘汰，而不是因为'最长'把阈值拉低后放行: $codes"
+        )
+    }
 }

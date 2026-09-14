@@ -156,7 +156,11 @@ object CodeExtractor {
 
     /** 快递/取件强信号词：与金融词对冲，命中则说明可能是含支付信息的取件通知。 */
     private val EXPRESS_SIGNAL_KEYWORDS = listOf(
-        "取件", "快递", "包裹", "驿站", "代收点", "货栈", "柜", "提货", "开箱", "运单", "取餐", "取餐码",
+        // ⚠️ 这里**不能出现单字词**：历史上含裸字「柜」，导致
+        // 「【xx银行】储蓄卡消费验证码 618008…柜台业务请咨询」被当成快递信号放行，长数字 618008 以取件码入库。
+        // 要表达"柜"必须用复合词；isFinancialNoise 另有长度 ≥2 的兜底校验，防止以后再被加进单字词。
+        "取件", "快递", "包裹", "驿站", "代收点", "货栈", "提货", "开箱", "运单", "取餐", "取餐码",
+        "快递柜", "智能柜", "自提柜", "取件柜", "云柜",
         // 餐饮取餐信号：点单/排队截图常带支付信息（微信支付/实付），若无这些词会被金融闸门误杀
         // （真机复测发现：LINLEE 取单码截图被金融噪音拦截）
         "取餐号", "取单码", "取单号", "排队", "点单"
@@ -176,9 +180,11 @@ object CodeExtractor {
         if (text.isBlank()) return false
         val hasFinancial = FINANCIAL_KEYWORDS.any { text.contains(it, ignoreCase = true) }
         if (!hasFinancial) return false
-        val hasExpressSignal = EXPRESS_SIGNAL_KEYWORDS.any { text.contains(it, ignoreCase = true) }
+        // 兜底：信号词必须 ≥2 字。单字（如「柜」）在中文里太常见，会被"柜台/柜员"这类金融文案误命中，
+        // 从而把金融验证码放行成取件码（历史上就是这么错的）。
+        val hasExpressSignal = EXPRESS_SIGNAL_KEYWORDS.any { it.length >= 2 && text.contains(it, ignoreCase = true) }
         if (hasExpressSignal) return false
-        val hasCouponSignal = COUPON_SIGNAL_KEYWORDS.any { text.contains(it) }
+        val hasCouponSignal = COUPON_SIGNAL_KEYWORDS.any { it.length >= 2 && text.contains(it) }
         return !hasCouponSignal
     }
 
@@ -435,8 +441,11 @@ object CodeExtractor {
         // 1-6-5020 的子串 6-5020），只保留最长者，避免短残码入库
         val byLen = candidates.sortedByDescending { it.code.length }
         val keptCands = byLen.filter { c -> byLen.none { o -> o !== c && c.code in o.code && o.code.length > c.code.length } }
-        val top = keptCands.firstOrNull()?.score ?: 0f
-        for (c in keptCands) {
+        // 阈值基准必须是"最高分候选"：keptCands 是按**码长**排序的（为上面子串消除服务），
+        // 取 firstOrNull() 会拿到"最长候选"的分数 —— 同屏只要有个低分长数字码，阈值就被拉低，
+        // 本应被 top×STRONG_PASS_RATIO 淘汰的纯数字噪声会全部放行，且输出顺序也按码长而非分数。
+        val top = keptCands.maxOfOrNull { it.score } ?: 0f
+        for (c in keptCands.sortedByDescending { it.score }) {
             if (c.code in seen) continue; seen.add(c.code)
             // 修复多通知同屏漏识别：强上下文证据码(PREFIXED/凭条/段式)不过 top×0.75 阈值，
             // 只对无证据的弱候选(纯数字噪声)做 top×0.75 过滤，避免高分码拖死同屏次高分真实码。

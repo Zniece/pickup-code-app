@@ -59,7 +59,12 @@ object BrandResolver {
 
     // Order/tracking number patterns (used for brand positioning)
     // 允许尾缀 CN：RA/EMS 单号（如 RA123456789CN、EA123456789CN）此前因尾缀 CN 无法命中 \b 而被漏抓
-    private val COURIER_ORDER_NUM = Regex("""\b(?:[A-Z]{2,3}\d{8,14}(?:CN)?|RA\d{9,13}CN|\d{13,15}|\d{2,4}-\d{3,5}-\d{4,6})\b""")
+    // ⚠️ 不能用 \b：Android(ICU) 把中文当词字符，而真实通知里运单号几乎总紧贴中文
+    // （如「韵达快递435316307329341」），\b 不成立 → 品牌判定退化、快递100 反查链路静默失效。
+    // 统一用环视边界（本文件与 PatternLearner 保持同一写法）。
+    private val COURIER_ORDER_NUM = Regex(
+        """(?<![\dA-Za-z])(?:[A-Z]{2,3}\d{8,14}(?:CN)?|RA\d{9,13}CN|\d{13,15}|\d{2,4}-\d{3,5}-\d{4,6})(?![\dA-Za-z])"""
+    )
 
     internal fun sourceFromLine(line: OCREngine.TextLine, hint: String, allLines: List<OCREngine.TextLine>, allText: String): String {
         // Strategy (ordered by reliability):
