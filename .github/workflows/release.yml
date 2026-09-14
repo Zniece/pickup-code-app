@@ -49,9 +49,11 @@ jobs:
         run: |
           if [ -n "$KEYSTORE_B64" ]; then
             echo "$KEYSTORE_B64" | base64 -d > "$GITHUB_WORKSPACE/release.keystore"
-            echo "已配置签名密钥，将产出签名包"
+            echo "SIGNED=1" >> "$GITHUB_ENV"
+            echo "已配置签名密钥，将产出**签名包**"
           else
-            echo "未配置签名密钥，将产出未签名包（仅供校验）"
+            echo "SIGNED=0" >> "$GITHUB_ENV"
+            echo "::warning::未配置签名密钥（PICKUP_STORE_BASE64），本次只出**未签名包**，不会发布 Release"
           fi
 
       - name: Run unit tests
@@ -69,29 +71,34 @@ jobs:
           ./gradlew :app:assembleRelease --console=plain
 
       # 关键校验：产物版本号必须与 tag 一致，否则直接失败（防止再次出现 tag/产物错位）
+      # 注意：无 keystore 时 AGP 的产物名会带 -unsigned 后缀，所以这里用通配匹配，不能写死文件名。
       - name: Verify APK version matches tag
         if: startsWith(github.ref, 'refs/tags/')
         run: |
+          set -x
           TAG="${GITHUB_REF_NAME#v}"
-          AAPT2=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)
-          BADGING=$("$AAPT2" dump badging app/build/outputs/apk/release/app-arm64-v8a-release.apk)
+          AAPT2=$(command -v aapt2 || ls "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)
+          if [ -z "$AAPT2" ]; then echo "::error::找不到 aapt2"; ls "${ANDROID_HOME:-}/build-tools" || true; exit 1; fi
+          APK=$(ls app/build/outputs/apk/release/app-arm64-v8a-release*.apk 2>/dev/null | head -1)
+          if [ -z "$APK" ]; then echo "::error::找不到 APK 产物"; ls -R app/build/outputs/apk/release || true; exit 1; fi
+          BADGING=$("$AAPT2" dump badging "$APK")
           VERSION_NAME=$(echo "$BADGING" | sed -n "s/.*versionName='\([^']*\)'.*/\1/p")
           VERSION_CODE=$(echo "$BADGING" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")
-          echo "tag=$TAG apk versionName=$VERSION_NAME versionCode=$VERSION_CODE"
+          echo "tag=$TAG apk=$APK versionName=$VERSION_NAME versionCode=$VERSION_CODE"
           if [ "$TAG" != "$VERSION_NAME" ]; then
-            echo "::error::tag($TAG) 与 APK versionName($VERSION_NAME) 不一致 —— tag 是否打在版本号 bump 提交上？"
+            echo "::error::tag($TAG) 与 APK versionName($VERSION_NAME) 不一致 —— tag 是否打在版本号 bump 提交（或其之后）？"
             exit 1
           fi
 
       # 校验签名（有密钥时）
       - name: Verify signature
         run: |
-          APKSIGNER=$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)
-          APK=app/build/outputs/apk/release/app-arm64-v8a-release.apk
-          if [ -f release.keystore ]; then
+          APKSIGNER=$(command -v apksigner || ls "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1)
+          APK=$(ls app/build/outputs/apk/release/app-arm64-v8a-release*.apk | head -1)
+          if [ "$SIGNED" = "1" ]; then
             "$APKSIGNER" verify --print-certs "$APK"
           else
-            echo "未配置密钥，跳过签名校验"
+            echo "未配置密钥，跳过签名校验（产物为 unsigned）"
           fi
 
       - name: Compute SHA-256
@@ -105,8 +112,9 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # 只有签名包才发布：未签名 APK 根本无法安装，发出去只会误导用户。
       - name: Create GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') && env.SIGNED == '1'
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -116,3 +124,9 @@ jobs:
           body: |
             > 请直接从旧版本升级到本版。若你装的是 v1.0.0–v1.0.2 且中间未更新过，
             > **不要经过 1.0.8 / 1.0.9**（那两个版本对旧数据库会闪退）。
+
+      - name: Skip notice
+        if: startsWith(github.ref, 'refs/tags/') && env.SIGNED != '1'
+        run: |
+          echo "::warning::未配置签名密钥，已跳过 Release 发布（未签名 APK 无法安装）。"
+          echo "把 keystore 以 base64 存入 secret PICKUP_STORE_BASE64，并配 PICKUP_STORE_PASSWORD / PICKUP_KEY_ALIAS / PICKUP_KEY_PASSWORD 即可自动发布签名包。" >> "$GITHUB_STEP_SUMMARY"
