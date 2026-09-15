@@ -7,13 +7,10 @@
 自动识别截屏或分享图片中的取餐码、取件码和券码，通知提醒 + 一键标记已取。数据全部留在本机。
 
 <div align="center">
-  <img src="screenshots/Screenshot_20260813_164743.jpg" width="30%" alt="截图 3" />
-  <img src="screenshots/Screenshot_20260813_165152.jpg" width="30%" alt="截图 4" />
-  <img src="screenshots/Screenshot_20260813_163603.jpg" width="30%" alt="截图 1" />
-  <img src="screenshots/Screenshot_20260813_163606.jpg" width="30%" alt="截图 2" />
-  <img src="screenshots/Screenshot_20260813_165244.jpg" width="30%" alt="截图 5" />
-  <img src="screenshots/Screenshot_20260813_165248.jpg" width="30%" alt="截图 6" />
-  <img src="screenshots/Screenshot_20260813_165252.jpg" width="30%" alt="截图 7" />
+  <img src="screenshots/home.jpg" width="30%" alt="主页：取件码/取餐码列表与筛选" />
+  <img src="screenshots/detail.jpg" width="30%" alt="详情页：标题栏可一键跳转身份码" />
+  <img src="screenshots/identity-code.jpg" width="30%" alt="身份码：淘宝/菜鸟/拼多多一键打开" />
+  <img src="screenshots/settings.jpg" width="30%" alt="设置：识别与验证服务逐项可开关" />
 </div>
 
 ## 功能
@@ -30,6 +27,11 @@
 - **预存地址优先**：把你常去的驿站/快递柜预先存好（**完整名称 + 关键词**），识别命中任一关键词时，
   直接用你录入的完整名称替换识别结果，而不是 OCR 抄下来的那行。关键词留空则用完整名称匹配。
   支持从历史记录一键导入、停用、删除；删除过的不会再被自动学回来。地址加密保存在本机。
+
+  <div align="center">
+    <img src="screenshots/saved-address-dialog.jpg" width="34%" alt="常用取件地址：完整名称 + 关键词" />
+  </div>
+
 - **逐码窗口定位**：多条通知同屏时，按码所在的卡片窗口取地址，避免不同驿站之间串台
 - **多策略管线**：显式标签 → 「到…取件」句式 → 号柜 → 管道分隔 → 兜底等 11 级策略，自动跨行拼接 OCR 拆断的地址
 - **折叠地址补全**：收货/取件地址被 UI 折叠成短串时，自动用同屏更完整的街道地址替换
