@@ -31,6 +31,8 @@ import com.pickupcode.app.ui.components.ManualCodeDialog
 import com.pickupcode.app.ui.screens.CodeDetailScreen
 import com.pickupcode.app.ui.screens.EditField
 import com.pickupcode.app.ui.screens.DedupScreen
+import com.pickupcode.app.ui.screens.IdentityCodeScreen
+import com.pickupcode.app.ui.screens.SavedAddressScreen
 import com.pickupcode.app.ui.screens.SettingsScreen
 import com.pickupcode.app.ui.screens.StatsScreen
 import com.pickupcode.app.ui.screens.home.HomeScreen
@@ -48,7 +50,7 @@ class MainActivity : ComponentActivity() {
     // B3: showDuplicate 通知点击后待处理的去重入口跳转（onCreate/onNewIntent 置位，组合期消费）
     private var pendingDedup by mutableStateOf(false)
 
-    enum class Screen { Home, Settings, Detail, Trash, Stats, Dedup }
+    enum class Screen { Home, Settings, Detail, Trash, Stats, Dedup, SavedAddress, IdentityCode }
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -129,11 +131,13 @@ class MainActivity : ComponentActivity() {
                         onFabClick = { showManualDialog = true },
                         onTrashClick = { currentScreen = Screen.Trash.name },
                         onStatsClick = { currentScreen = Screen.Stats.name },
-                        onDedupClick = { currentScreen = Screen.Dedup.name }
+                        onDedupClick = { currentScreen = Screen.Dedup.name },
+                        onIdentityCodeClick = { currentScreen = Screen.IdentityCode.name }
                     )
                     Screen.Settings -> SettingsScreen(
                         onBack = { currentScreen = Screen.Home.name },
-                        onStatsClick = { currentScreen = Screen.Stats.name }
+                        onStatsClick = { currentScreen = Screen.Stats.name },
+                        onSavedAddressClick = { currentScreen = Screen.SavedAddress.name }
                     )
                     Screen.Detail -> DetailScreenWrapper(
                         codeId = selectedCodeId,
@@ -146,6 +150,12 @@ class MainActivity : ComponentActivity() {
                         onBack = { currentScreen = Screen.Home.name }
                     )
                     Screen.Dedup -> DedupScreen(
+                        onBack = { currentScreen = Screen.Home.name }
+                    )
+                    Screen.SavedAddress -> SavedAddressScreen(
+                        onBack = { currentScreen = Screen.Settings.name }
+                    )
+                    Screen.IdentityCode -> IdentityCodeScreen(
                         onBack = { currentScreen = Screen.Home.name }
                     )
                 }

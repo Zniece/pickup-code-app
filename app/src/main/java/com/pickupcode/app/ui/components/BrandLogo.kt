@@ -39,7 +39,8 @@ object BrandLogo {
         "holiland" to R.drawable.logo_holiland,
         "meituan" to R.drawable.logo_meituan,
         "eleme" to R.drawable.logo_eleme,
-        "taobao" to R.drawable.logo_taobao
+        "taobao" to R.drawable.logo_taobao,
+        "pinduoduo" to R.drawable.logo_pinduoduo
     )
 
     /** 品牌关键词 → key。顺序无关（匹配时按长度降序）。 */
@@ -47,6 +48,7 @@ object BrandLogo {
         "美团外卖" to "meituan", "美团" to "meituan",
         "饿了么" to "eleme",
         "淘宝" to "taobao",
+        "拼多多" to "pinduoduo",
         "京东物流" to "jd", "京东快递" to "jd", "京东" to "jd",
         "韵达" to "yunda", "中通" to "zto", "圆通" to "yto", "申通" to "sto",
         "顺丰" to "sf", "极兔" to "jt", "菜鸟" to "cainiao", "德邦" to "deppon",
@@ -85,6 +87,7 @@ object BrandLogo {
         "com.sankuai.meituan", "com.sankuai.meituan.takeoutnew" -> "meituan"
         "me.ele" -> "eleme"
         "com.taobao.taobao" -> "taobao"
+        "com.xunmeng.pinduoduo" -> "pinduoduo"
         "com.jingdong.app.mall" -> "jd"
         "com.sf.activity" -> "sf"
         else -> null

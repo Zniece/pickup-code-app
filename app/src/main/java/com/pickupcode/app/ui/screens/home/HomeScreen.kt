@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.QrCode
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -89,7 +90,8 @@ fun HomeScreen(
     onFabClick: () -> Unit,
     onTrashClick: () -> Unit,
     onStatsClick: () -> Unit,
-    onDedupClick: () -> Unit
+    onDedupClick: () -> Unit,
+    onIdentityCodeClick: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val db = remember { AppDatabase.getInstance(context) }
@@ -170,6 +172,10 @@ fun HomeScreen(
                     Text("码上闪记", fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
                 },
                 actions = {
+                    // 取件时最常用的动作放在最前面：一键打开身份码
+                    IconButton(onClick = onIdentityCodeClick) {
+                        Icon(Icons.Default.QrCode, "身份码")
+                    }
                     IconButton(onClick = onStatsClick) {
                         Icon(Icons.Default.Info, "统计")
                     }

@@ -11,6 +11,32 @@
         android:name="android.hardware.telephony"
         android:required="false" />
 
+    <!--
+      包可见性（Android 11+ / targetSdk 30+）：不加这段，本应用**看不见**第三方包 ——
+      getPackageInfo / getLaunchIntentForPackage / resolveActivity 全部返回 null，
+      「判断装没装淘宝·菜鸟·拼多多再跳身份码」的代码会静默失效。
+
+      scheme 声明同时用于显式 setPackage 启动时的可解析性校验。
+    -->
+    <queries>
+        <!-- 身份码跳转目标 -->
+        <package android:name="com.taobao.taobao" />
+        <package android:name="com.cainiao.wireless" />
+        <package android:name="com.xunmeng.pinduoduo" />
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="taobao" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="cainiao" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="pinduoduo" />
+        </intent>
+    </queries>
+
     <application
         android:name=".App"
         android:allowBackup="false"

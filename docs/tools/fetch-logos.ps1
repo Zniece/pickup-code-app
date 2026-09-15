@@ -41,6 +41,7 @@ $brands = [ordered]@{
   meituan = 'https://www.meituan.com/'
   eleme   = 'https://www.ele.me/'
   taobao  = 'https://www.taobao.com/'
+  pinduoduo = 'https://www.pinduoduo.com/'
 }
 
 function Get-Candidates($html, $baseUrl) {

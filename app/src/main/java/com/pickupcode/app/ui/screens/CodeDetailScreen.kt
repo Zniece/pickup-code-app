@@ -31,6 +31,7 @@ import com.pickupcode.app.extractor.CodeValidator
 import com.pickupcode.app.learner.CommonStationStore
 import com.pickupcode.app.learner.PatternLearner
 import com.pickupcode.app.ui.components.BrandLogo
+import com.pickupcode.app.ui.components.IdentityCodeTopBarActions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -88,31 +89,23 @@ fun CodeDetailScreen(
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("详情") }, navigationIcon = {
-            IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } }) }
+        topBar = {
+            TopAppBar(
+                title = { Text("详情") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                },
+                // 身份码跳转：三家分开、各带 logo（用户要求放在标题栏右侧）
+                actions = { IdentityCodeTopBarActions() }
+            )
+        }
     ) { padding ->
         Column(
             modifier = Modifier.fillMaxSize().padding(padding).padding(16.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("类型", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    val label = when (item.type) {
-                        "pickup_parcel" -> "取件码"
-                        "coupon" -> "券码"
-                        else -> "取餐码"
-                    }
-                    val icon = when (item.type) {
-                        "pickup_parcel" -> "📦"
-                        "coupon" -> "🎟️"
-                        else -> "🥤"
-                    }
-                    Text("$icon $label", fontSize = 18.sp)
-                }
-            }
-
+            // 2026-09-15 用户要求：删掉「类型」卡片（码值类型在主页列表已有筛选/徽标体现，详情页里冗余）
             EditableField(label = "码值", value = item.code, displayFontSize = 28.sp, displayFontWeight = FontWeight.Bold,
                 onSave = { onUpdateField(EditField.CODE, it) })
             if (item.isActive) {
