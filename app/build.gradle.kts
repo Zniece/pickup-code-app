@@ -26,12 +26,14 @@ android {
         applicationId = "com.pickupcode.app"
         minSdk = 26
         targetSdk = 35
-        // 24/1.0.9 与已发布版同号 → 修复（含 DB v7 迁移）无法下发。
-        // 24 → 25 / 1.0.9 → 1.0.10：本版包含 MIGRATION_6_7（清理 1→3 时代遗留孤儿列），
-        // 是那批"从 DB v1/v2 直跳上来会崩"的老用户唯一能升上来的版本。
-        // ⚠️ 打 tag 时必须让 tag 落在本次 bump 提交上（v1.0.9 出现过 tag 与产物错位）。
-        versionCode = 25
-        versionName = "1.0.10"
+        // 版本史（详见 .scratch/project-review.md 与 RELEASE_NOTES_*.md）：
+        //   24 / 1.0.9  —— 与已发布版同号，导致含 DB v7 迁移的修复发不出去
+        //   25 / 1.0.10 —— 首次可下发的升级安全修复版（DB v7 迁移 + 截图治理 + 识别准确率/隐私/竞态修复）
+        //   26 / 1.1.0  —— 功能版本：常用取件地址（预存地址）、身份码一键跳转、身份码页面拒采
+        // ⚠️ 打 tag 时必须让 tag 落在版本号 bump 的提交（或其之后）上 —— v1.0.9 出现过 tag 与产物错位；
+        //    release.yml 现已加"APK versionName == tag"校验来拦截这类失误。
+        versionCode = 26
+        versionName = "1.1.0"
     }
 
     signingConfigs {
