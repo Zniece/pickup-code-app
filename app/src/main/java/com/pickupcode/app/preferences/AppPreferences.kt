@@ -213,67 +213,13 @@ object AppPreferences {
 
     // ---------------------------------------------------------------
     // B6: API Key 加密（AndroidKeyStore AES-GCM，密文存 DataStore）
+    // 实现已抽到 [SecretCipher]（「常用取件地址」也要用），此处仅保留薄封装：
+    // 密钥别名与密文格式不变，**既有密文无需迁移**。
     // ---------------------------------------------------------------
 
-    private const val KEYSTORE_ALIAS = "pickup_code_keys"
-    private const val ENC_PREFIX = "v1:"
-    private val AES_TRANSFORM = "AES/GCM/NoPadding"
-
-    /** 取/生成 Keystore 内不可导出的 AES 密钥（备份恢复后密钥丢失→解密失败按空值处理）。 */
-    private fun keystoreKey(): SecretKey? = try {
-        val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (ks.getKey(KEYSTORE_ALIAS, null) as? SecretKey) ?: run {
-            val g = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-            g.init(
-                KeyGenParameterSpec.Builder(
-                    KEYSTORE_ALIAS,
-                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
-                )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-            )
-            g.generateKey()
-        }
-    } catch (_: Exception) {
-        null
-    }
-
-    /** 加密明文；空串原样返回（保持默认值语义）；Keystore 不可用或加密失败时抛异常拒绝存储（H2）。 */
-    private fun encrypt(plain: String): String {
-        if (plain.isEmpty()) return plain
-        val key = keystoreKey()
-            ?: throw IllegalStateException("AndroidKeyStore 密钥不可用，拒绝明文存储 API Key")
-        return try {
-            val cipher = Cipher.getInstance(AES_TRANSFORM)
-            cipher.init(Cipher.ENCRYPT_MODE, key)
-            val ct = cipher.doFinal(plain.toByteArray(Charsets.UTF_8))
-            ENC_PREFIX + Base64.encodeToString(cipher.iv, Base64.NO_WRAP) +
-                "." + Base64.encodeToString(ct, Base64.NO_WRAP)
-        } catch (e: Exception) {
-            // H2: 加密失败拒绝明文落盘，抛异常让写入失败（调用方 runCatching 捕获，保留旧值）
-            throw IllegalStateException("AES-GCM 加密失败，拒绝明文存储 API Key", e)
-        }
-    }
+    /** 加密明文；空串原样返回；Keystore 不可用或加密失败时抛异常拒绝存储（H2）。 */
+    private fun encrypt(plain: String): String = SecretCipher.encrypt(plain, what = "API Key")
 
     /** 解密存储值；非密文（旧明文/空）原样返回，密钥丢失/损坏返回空串。 */
-    private fun decrypt(stored: String): String {
-        if (stored.isEmpty() || !stored.startsWith(ENC_PREFIX)) return stored
-        return try {
-            val body = stored.removePrefix(ENC_PREFIX)
-            val parts = body.split(".", limit = 2)
-            if (parts.size != 2) return ""
-            val cipher = Cipher.getInstance(AES_TRANSFORM)
-            cipher.init(
-                Cipher.DECRYPT_MODE,
-                keystoreKey() ?: return "",
-                GCMParameterSpec(128, Base64.decode(parts[0], Base64.NO_WRAP))
-            )
-            String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
-        } catch (e: Exception) {
-            Log.w(TAG, "AES-GCM 解密失败，API Key 需重新输入", e)
-            ""
-        }
-    }
+    private fun decrypt(stored: String): String = SecretCipher.decrypt(stored, what = "API Key")
 }

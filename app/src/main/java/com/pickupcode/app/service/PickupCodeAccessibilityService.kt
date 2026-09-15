@@ -506,6 +506,15 @@ class PickupCodeAccessibilityService : AccessibilityService() {
             return
         }
 
+        // 🔒 身份码 / 出库码页面：不识别、**不落盘截图**、不入库（身份码 = 取件凭证，见 SensitivePageGuard）
+        // 自动扫描白名单含淘宝/菜鸟/拼多多，用户在这三个 App 里打开身份码页就会走到这里。
+        if (com.pickupcode.app.util.SensitivePageGuard.isIdentityCodePage(allText)) {
+            Log.w(TAG, "身份码/出库码页面，拒绝识别与截图")
+            bmp?.recycle()
+            showResult("已跳过：身份码页面不读取、不截图")
+            return
+        }
+
         // ① 券码：检测到二维码/条码并解码，code = 解码内容（不需要 OCR）
         val hasCoupon = collectCouponResults(coupons, settings, allResults, codeSources)
 
@@ -519,7 +528,7 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         val aiErr = mergeAiResults(aiDeferred, settings, allResults, codeSources)
 
         // Extract address (parcel scenario)
-        val address = AddressExtractor.extractAddress(ocrLines, allText)
+        val address = AddressExtractor.extractAddressFromStores(this, ocrLines, allText)
 
         // ⑤ 问题5：若正则未识别到且 AI 也失败，提示里带上失败原因（用户有感知）
         if (notifyIfNoResult(allResults, aiErr, settings, silent, bmp)) return
@@ -784,3 +793,4 @@ class PickupCodeAccessibilityService : AccessibilityService() {
         }
     }
 }
+

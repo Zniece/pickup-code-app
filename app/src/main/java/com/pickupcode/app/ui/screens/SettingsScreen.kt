@@ -92,7 +92,11 @@ private data class SettingsCtx(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onStatsClick: () -> Unit = {},
+    onSavedAddressClick: () -> Unit = {}
+) {
     val ctx = LocalContext.current
     // 进程级 scope：防抖落盘/权限回调等 fire-and-forget 写不随页面销毁取消（否则 400ms 内返回会丢 Key/URL）
     val scope = com.pickupcode.app.App.appScope
@@ -186,6 +190,7 @@ fun SettingsScreen(onBack: () -> Unit, onStatsClick: () -> Unit = {}) {
             InputMethodsSection(sc)
             NotificationStatusCard(sc)
             VerifyServicesSection(sc)
+            SavedAddressSection(onSavedAddressClick)
             LearningStatsSection(sc, onStatsClick)
             AppearanceSection(sc)
             AboutSection(sc)
@@ -556,9 +561,34 @@ private fun AppearanceSection(sc: SettingsCtx) {
     }
 }
 
+/**
+ * 常用取件地址（预存地址）入口。
+ * 与自动学习的"常用站点"分开：这里进的是用户手动录入的权威地址列表。
+ */
 @Composable
-private fun AboutSection(sc: SettingsCtx) {
-    SettingsSectionCard(title = "关于") {
+private fun SavedAddressSection(onClick: () -> Unit) {
+    SettingsSectionCard(title = "常用取件地址") {
+        Column {
+            Text(
+                "预存你常去的驿站/快递柜地址，识别时优先采用（用你录入的地址替换 OCR 原文）。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "管理常用地址 ›",
+                style = MaterialTheme.typography.bodyMedium,
+                color = ValBlue,
+                modifier = Modifier
+                    .clickable { onClick() }
+                    .padding(vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun AboutSection(sc: SettingsCtx) {    SettingsSectionCard(title = "关于") {
         Column {
             Text("码上闪记 v${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.bodyLarge)
             Text("基于 ML Kit OCR · 数据仅存储在本地",

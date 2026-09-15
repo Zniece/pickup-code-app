@@ -126,7 +126,7 @@ class SmsReceiver : BroadcastReceiver() {
                     }
 
                     // 全屏地址（兜底用，各码优先取自己窗口内的地址）
-                    val fullAddress = AddressExtractor.extractAddress(lines, allText, context)
+                    val fullAddress = AddressExtractor.extractAddressFromStores(context, lines, allText)
                     val db = AppDatabase.getInstance(context)
                     val repo = db.repository
 
@@ -177,3 +177,4 @@ class SmsReceiver : BroadcastReceiver() {
         const val THROTTLE_MS = 30_000L
     }
 }
+

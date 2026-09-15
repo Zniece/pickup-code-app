@@ -12,7 +12,8 @@ import org.json.JSONObject
  * 与 [PatternLearner] 同风格：SharedPreferences 轻量 JSON 存储，无第三方依赖。
  *
  * 写入时机：每次成功保存取件记录时调用 [recordCode]（带地址），自动累计站点出现次数。
- * 读取时机：地址识别时调用 [getCommonStations] 拿 Top-N 常用站点做优先匹配。
+ * 读取时机（2026-09-15 起**不再**参与地址识别）：仅供「常用取件地址 → 从历史导入」列出候选，
+ * 由用户在 UI 里确认后才进入识别链路。[getCommonStations] 保留给该用途。
  * 存储上限：[MAX_ENTRIES] 条，按次数排序，超出裁剪。
  */
 object CommonStationStore {
@@ -51,6 +52,8 @@ object CommonStationStore {
     @Synchronized
     fun recordCode(context: Context, address: String, rawText: String = "") {
         val name = extractStationName(address.ifBlank { rawText }) ?: return
+        // 用户手动删掉过的站点/地址不要再学回来（否则"删了还在"让人以为删除没生效）。
+        if (SavedAddressStore.isIgnored(context, name)) return
         val cur = loadInternal(context)
         val next = LinkedHashMap<String, Int>()
         // 保留出现次数 >1 的既有条目 + 本次 +1
@@ -169,5 +172,26 @@ object CommonStationStore {
             }
             null
         } catch (_: Exception) { null }
+    }
+
+    /**
+     * 全部常用取件点（按次数降序，含只出现 1 次的）。
+     * 供「常用取件地址」页的**从历史记录导入**使用——自动学到的完整地址是导入的最佳候选。
+     */
+    fun getPickupPoints(context: Context): List<PickupPoint> {
+        val json = context.getSharedPreferences(PICKUP_PREFS, Context.MODE_PRIVATE)
+            .getString(KEY_PICKUP_POINTS, null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(json)
+            buildList {
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val addr = o.optString("address", "")
+                    if (addr.isNotBlank()) {
+                        add(PickupPoint(addr, o.optInt("count"), o.optLong("last", 0L)))
+                    }
+                }
+            }.sortedByDescending { it.count }
+        } catch (_: Exception) { emptyList() }
     }
 }

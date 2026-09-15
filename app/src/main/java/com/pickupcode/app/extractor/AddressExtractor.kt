@@ -617,6 +617,39 @@ object AddressExtractor {
 
 
     /**
+     * 该行是否落在 `code` 所在的**通知卡片窗口**内（±3 行且 y 距离 ≤400px）。
+     *
+     * 供上层判断"预存地址只作用于命中关键词那一行所属的那个码" ——
+     * 多码同屏时，一条预存地址不能被套到所有码上。
+     * 与 [extractAddressForCode] 共用同一套窗口规则（[inCodeWindow]），避免两处漂移。
+     */
+    fun isLineInCodeWindow(lines: List<OCREngine.TextLine>, code: String, lineIndex: Int): Boolean {
+        if (lines.isEmpty() || lineIndex !in lines.indices) return false
+        val codeIdx = lines.indexOfFirst { it.text.contains(code) }
+        if (codeIdx < 0) return false
+        val codeBoxTop = lines[codeIdx].boundingBox?.let { it.top.toFloat() }
+        return inCodeWindow(lines, codeIdx, codeBoxTop, lineIndex)
+    }
+
+    /** 卡片窗口规则（唯一实现）。`otherIdx == codeIdx` 视为不在窗口内（地址总在码行之外）。 */
+    private fun inCodeWindow(
+        lines: List<OCREngine.TextLine>,
+        codeIdx: Int,
+        codeBoxTop: Float?,
+        otherIdx: Int
+    ): Boolean {
+        if (otherIdx == codeIdx) return false
+        if (otherIdx !in lines.indices) return false
+        if (kotlin.math.abs(otherIdx - codeIdx) > CARD_LINE_WINDOW) return false
+        val b = lines[otherIdx].boundingBox ?: return true
+        val cIdxBox = lines[codeIdx].boundingBox
+        if (cIdxBox != null && codeBoxTop != null) {
+            return kotlin.math.abs(b.top.toFloat() - codeBoxTop) <= CARD_WINDOW_Y_GAP
+        }
+        return true
+    }
+
+    /**
      * 按码定位提取专属地址（多驿站通知中心场景）。
      * 在「码所在行附近的通知卡片窗口」内找该码的取件地址，而不是全屏抓一个地址。
      * 码行 ±3 行 且 y 距离 ≤ 400px 视为同一通知卡片。
@@ -627,16 +660,7 @@ object AddressExtractor {
         if (codeIdx < 0) return ""
         val codeBoxTop = lines[codeIdx].boundingBox?.let { it.top.toFloat() }
 
-        fun inWindow(otherIdx: Int): Boolean {
-            if (otherIdx == codeIdx) return false
-            if (kotlin.math.abs(otherIdx - codeIdx) > CARD_LINE_WINDOW) return false
-            val b = lines[otherIdx].boundingBox ?: return true
-            val cIdxBox = lines[codeIdx].boundingBox
-            if (cIdxBox != null && codeBoxTop != null) {
-                return kotlin.math.abs(b.top.toFloat() - codeBoxTop) <= CARD_WINDOW_Y_GAP
-            }
-            return true
-        }
+        fun inWindow(otherIdx: Int): Boolean = inCodeWindow(lines, codeIdx, codeBoxTop, otherIdx)
 
         // 窗口内的行（按 y 排序，从码行下方优先——地址/取件说明通常在码下方）
         val windowLines = lines
@@ -753,19 +777,42 @@ object AddressExtractor {
     fun isHighConfidenceFullAddress(lines: List<OCREngine.TextLine>, allText: String): Boolean =
         extractLocation(lines, allText).addrFrom in HIGH_CONFIDENCE_SOURCES
 
-    /** 增强版：context 非空时优先匹配用户常用站点（参考同类产品实现 setCommonStations）。 */
-    fun extractAddress(lines: List<OCREngine.TextLine>, allText: String, context: android.content.Context?): String {
-        if (context == null) return extractAddress(lines, allText)
-        val commonStations = com.pickupcode.app.learner.CommonStationStore.getCommonStations(context)
-        if (commonStations.isEmpty()) return extractAddress(lines, allText)
-        // S1b: 常用站点优先匹配——命中用户常去的驿站/快递柜/取件点，直接作为最可靠地址信号
-        for (line in lines) {
-            val t = line.text.trim()
-            val hit = commonStations.firstOrNull { t.contains(it.name, ignoreCase = true) }
-            if (hit != null) return t.take(80)
-        }
+    /**
+     * 地址识别增强版：**用户预存地址 → 原 11 级策略**。
+     *
+     * 预存模型（用户 2026-09-15 的想法）：**完整名称 + 一个至多个关键词**；
+     * OCR 命中任一关键词 → 用该记录的**完整名称**（写进记录、主页显示）。
+     *
+     * 以**纯数据**注入（不依赖 Context）——语料回归与 JVM 单测都能覆盖。
+     * 各识别入口用 [extractAddressFromStores] 从 Context 取数据后调用本函数。
+     *
+     * 2026-09-15：**移除了原 S1b「自动学习站点匹配」**（只保留一套匹配）。
+     * 自动学习数据仍作为「常用取件地址 → 从历史导入」的候选来源，不参与识别。
+     */
+    fun extractAddress(
+        lines: List<OCREngine.TextLine>,
+        allText: String,
+        saved: List<com.pickupcode.app.learner.SavedAddressStore.MatcherView> = emptyList()
+    ): String {
+        // 预存命中即终结：返回**完整名称**，不再走下面的通用策略。
+        SavedAddressMatcher.match(lines, saved)?.let { return it.fullName }
         return extractAddress(lines, allText)
     }
+
+    /**
+     * 便捷入口：从 Context 读预存地址后走上面的纯函数版。
+     * 四个识别入口（无障碍截图 / 分享图片 ×2 / 短信）都应走这里 ——
+     * 历史 bug：地址增强只挂在短信路径的旧重载上，另外三条主路径从未生效。
+     */
+    fun extractAddressFromStores(
+        context: android.content.Context,
+        lines: List<OCREngine.TextLine>,
+        allText: String
+    ): String = extractAddress(
+        lines = lines,
+        allText = allText,
+        saved = com.pickupcode.app.learner.SavedAddressStore.matcherViews(context)
+    )
 
     /**
      * 独立柜号提取（参考同类产品实现 extractCabinetInfo）：从取件文本里抓柜号/格口，

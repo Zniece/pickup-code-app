@@ -267,7 +267,7 @@ object ShareReceiver {
         }.filter { it.text.isNotBlank() }
         if (lines.isEmpty()) return
         val allText = lines.joinToString(" ") { it.text }
-        val address = AddressExtractor.extractAddress(lines, allText)
+        val address = AddressExtractor.extractAddressFromStores(context, lines, allText)
         extractAndNotify(context, lines, "$sourceLabel | ${lines.joinToString(" ") { it.text }}", "", address, scope, shareSource = shareSource)
     }
 
@@ -319,7 +319,7 @@ object ShareReceiver {
         }
 
         val allText = lines.joinToString(" ") { it.text }
-        val address = AddressExtractor.extractAddress(lines, allText)
+        val address = AddressExtractor.extractAddressFromStores(context, lines, allText)
         val snippet = "$sourceLabel | ${lines.joinToString(" ") { it.text }}"
         extractAndNotify(context, lines, snippet, screenshotPath, address, scope, coupons, shareSource)
     }
@@ -527,3 +527,4 @@ object ShareReceiver {
         }
     }
 }
+

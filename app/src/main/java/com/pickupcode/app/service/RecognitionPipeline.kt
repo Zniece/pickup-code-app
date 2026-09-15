@@ -57,13 +57,26 @@ object RecognitionPipeline {
         timestamp: Long = System.currentTimeMillis(),
         repo: CodeRepository
     ): List<SavedCode> {
+        // 🔒 兜底：身份码/出库码页面一律不入库（截图拒采在无障碍路径已做，这里防其它入口漏网）
+        if (com.pickupcode.app.util.SensitivePageGuard.isIdentityCodePage(allText)) {
+            android.util.Log.w("RecognitionPipeline", "身份码/出库码页面，拒绝入库")
+            return emptyList()
+        }
         val saved = mutableListOf<SavedCode>()
         val seen = mutableSetOf<String>()
+        // 同屏码数（多码时位置类证据要防串台）
+        val multiCode = allResults.distinctBy { "${it.first}|${it.second}" }.size > 1
         // 全屏兜底仲裁只算一次（避免多码同屏每码重跑全量 extractLocation）：
         // 单码同屏全屏地址必然属于本卡，几何兜底照常采信；多码同屏防串台仅采信文本证据型来源
         val fallbackAddr = AddressExtractor.resolveAddress(
             lines, allText, perCodeAddr = "", fullAddress = fullAddress,
-            multiCodeOnScreen = allResults.distinctBy { "${it.first}|${it.second}" }.size > 1
+            multiCodeOnScreen = multiCode
+        )
+        // 预存地址（用户录的"完整名称 + 关键词"）命中一次即可复用。
+        // 用户期望：**命中关键词就必须用我录的完整名称** —— 因此它是最高优先，
+        // 压过逐码窗口地址与全屏兜底（2026-09-15 修：此前窗口地址赢，导致关键词命中"没作用"）。
+        val savedMatch = com.pickupcode.app.extractor.SavedAddressMatcher.match(
+            lines, com.pickupcode.app.learner.SavedAddressStore.matcherViews(context)
         )
         // 柜号与码无关，同屏只提取一次（仅在有取件码时使用）
         var cabinetCache: String? = null
@@ -73,9 +86,16 @@ object RecognitionPipeline {
             seen.add(key)
             val source = codeSources[code] ?: "unknown"
 
-            // 逐码窗口地址优先；窗口未命中时回退到仲裁后的全屏兜底地址
+            // 地址优先级：预存命中的完整名称 > 逐码窗口地址 > 仲裁后的全屏兜底
+            // 多码同屏时，预存地址只作用于"命中关键词那一行所属的码"，避免一条地址套到所有码上。
             val perCodeAddr = AddressExtractor.extractAddressForCode(lines, code)
-            val effAddr = perCodeAddr.ifBlank { fallbackAddr }
+            val effAddr = if (savedMatch != null &&
+                (!multiCode || AddressExtractor.isLineInCodeWindow(lines, code, savedMatch.lineIndex))
+            ) {
+                savedMatch.fullName
+            } else {
+                perCodeAddr.ifBlank { fallbackAddr }
+            }
             // 独立柜号（仅取件码）
             val cabinet = if (type == CodeExtractor.CodeType.pickup_parcel) {
                 if (cabinetCache == null) cabinetCache = AddressExtractor.extractCabinetNumber(lines, allText)
